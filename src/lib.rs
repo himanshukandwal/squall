@@ -1,14 +1,13 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! squall: an in-memory key-value store with Redis-style data types.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod error;
+mod hashes;
+mod keyspace;
+mod lists;
+mod sets;
+mod store;
+mod strings;
+mod value;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use error::Error;
+pub use store::Store;
