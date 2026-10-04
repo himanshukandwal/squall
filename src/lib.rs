@@ -13,3 +13,4 @@ mod zsets;
 
 pub use error::Error;
 pub use store::Store;
+pub use zsets::Bound;
