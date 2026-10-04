@@ -71,6 +71,29 @@ impl Store {
         self.map.keys().cloned().collect()
     }
 
+    /// Returns the keys matching a Redis-style glob `pattern`, in unspecified
+    /// order, for keys of every type. Redis: `KEYS pattern` (single call, no
+    /// cursor).
+    ///
+    /// Supports `*`, `?`, `[abc]`, ranges `[a-z]`, negation `[^a]` and `\`
+    /// escapes. Matching is byte-based and case-sensitive; odd patterns never
+    /// error.
+    ///
+    /// ```
+    /// let mut store = squall::Store::new();
+    /// store.set("user:1", "a");
+    /// store.set("admin:1", "b");
+    /// assert_eq!(store.scan("user:*"), vec![b"user:1".to_vec()]);
+    /// ```
+    pub fn scan(&self, pattern: impl AsRef<[u8]>) -> Vec<Vec<u8>> {
+        let pattern = pattern.as_ref();
+        self.map
+            .keys()
+            .filter(|k| crate::glob::glob_match(pattern, k))
+            .cloned()
+            .collect()
+    }
+
     /// Returns the number of keys in the store. Redis: `DBSIZE`.
     ///
     /// ```
