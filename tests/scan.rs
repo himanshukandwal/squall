@@ -2,7 +2,7 @@ use squall::Store;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-fn scan(s: &Store, pat: &str) -> BTreeSet<Vec<u8>> {
+fn scan(s: &Store, pat: impl AsRef<[u8]>) -> BTreeSet<Vec<u8>> {
     s.scan(pat).into_iter().collect()
 }
 
@@ -48,12 +48,12 @@ fn bracket_class_ranges_and_negation() {
 
 #[test]
 fn backslash_escapes_specials() {
-    let s = store(&["a*b", "axb", "a?b", "a[b", "a\\b"]);
+    let s = store(&["a*b", "axb", "a?b", "a[b", "a\\b", "a]b"]);
     assert_eq!(scan(&s, "a\\*b"), set_of(&["a*b"]));
     assert_eq!(scan(&s, "a\\?b"), set_of(&["a?b"]));
     assert_eq!(scan(&s, "a\\[b"), set_of(&["a[b"]));
     assert_eq!(scan(&s, "a\\\\b"), set_of(&["a\\b"]));
-    assert_eq!(scan(&s, "a[\\]]b"), set_of(&[]));
+    assert_eq!(scan(&s, "a[\\]]b"), set_of(&["a]b"]));
 }
 
 #[test]
@@ -74,16 +74,13 @@ fn case_sensitive_and_binary_safe() {
     let mut s = Store::new();
     s.set("Abc", "v");
     s.set("abc", "v");
-    s.set(b"a\0b".to_vec(), "v");
-    s.set(b"\xff\xfe".to_vec(), "v");
+    s.set(b"a\0b", "v");
+    s.set(b"\xff\xfe", "v");
     assert_eq!(scan(&s, "abc"), set_of(&["abc"]));
     assert_eq!(scan(&s, "A*"), set_of(&["Abc"]));
-    let nul: BTreeSet<Vec<u8>> = s.scan(b"a?b").into_iter().collect();
-    assert_eq!(nul, BTreeSet::from([b"a\0b".to_vec()]));
-    let hi: BTreeSet<Vec<u8>> = s.scan(b"\xff?").into_iter().collect();
-    assert_eq!(hi, BTreeSet::from([b"\xff\xfe".to_vec()]));
-    let class: BTreeSet<Vec<u8>> = s.scan(b"[\xff]\xfe").into_iter().collect();
-    assert_eq!(class, BTreeSet::from([b"\xff\xfe".to_vec()]));
+    assert_eq!(scan(&s, b"a?b"), BTreeSet::from([b"a\0b".to_vec()]));
+    assert_eq!(scan(&s, b"\xff?"), BTreeSet::from([b"\xff\xfe".to_vec()]));
+    assert_eq!(scan(&s, b"[\xff]\xfe"), BTreeSet::from([b"\xff\xfe".to_vec()]));
 }
 
 #[test]
@@ -102,10 +99,11 @@ fn malformed_patterns_do_not_error() {
     assert_eq!(scan(&s, "[^b"), set_of(&["a", "["]));
     // Trailing backslash matches a literal backslash.
     assert_eq!(scan(&s, "a\\"), set_of(&["a\\"]));
-    // Degenerate classes must not panic.
-    let _ = s.scan("[]");
-    let _ = s.scan("[");
-    let _ = s.scan("[^");
+    // Empty class matches nothing; `[^` negates an empty class, so it
+    // matches any single byte (Redis stringmatchlen).
+    assert_eq!(scan(&s, "[]"), set_of(&[]));
+    assert_eq!(scan(&s, "[^"), set_of(&["a", "["]));
+    assert_eq!(scan(&s, "["), set_of(&[]));
 }
 
 #[test]
