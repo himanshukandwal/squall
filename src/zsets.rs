@@ -50,6 +50,24 @@ impl ZSet {
         old.is_none()
     }
 
+    /// Members with scores in rank order for the inclusive, possibly negative
+    /// index window, clamped lrange-style. O(n) skip to `start`.
+    fn window(&self, start: i64, stop: i64) -> impl Iterator<Item = &(Score, Vec<u8>)> {
+        let len = self.ordered.len() as i128;
+        let resolve = |i: i64| {
+            let i = i128::from(i);
+            if i < 0 { i + len } else { i }
+        };
+        let start = resolve(start).max(0);
+        let stop = resolve(stop).min(len - 1);
+        let take = if start > stop {
+            0
+        } else {
+            (stop - start + 1) as usize
+        };
+        self.ordered.iter().skip(start as usize).take(take)
+    }
+
     fn remove(&mut self, member: &[u8]) -> bool {
         match self.scores.remove(member) {
             Some(old) => {
@@ -170,10 +188,7 @@ impl Store {
         let (removed, now_empty) = match self.map.get_mut(key) {
             None => return Ok(0),
             Some(Value::ZSet(z)) => {
-                let removed = members
-                    .into_iter()
-                    .filter(|m| z.remove(m.as_ref()))
-                    .count();
+                let removed = members.into_iter().filter(|m| z.remove(m.as_ref())).count();
                 (removed, z.scores.is_empty())
             }
             Some(_) => return Err(Error::WrongType),
@@ -182,5 +197,64 @@ impl Store {
             self.map.remove(key);
         }
         Ok(removed)
+    }
+
+    fn zset(&self, key: &[u8]) -> Result<Option<&ZSet>, Error> {
+        match self.map.get(key) {
+            None => Ok(None),
+            Some(Value::ZSet(z)) => Ok(Some(z)),
+            Some(_) => Err(Error::WrongType),
+        }
+    }
+
+    /// Returns the members at ranks `start..=stop` in ascending score order
+    /// (ties by member bytes). Indices follow `lrange`: negative counts from
+    /// the end, `stop` is inclusive, out-of-range indices are clamped, and
+    /// an empty window or missing key gives an empty result. Fails with
+    /// [`Error::WrongType`] if the key holds a non-zset. Skipping to `start`
+    /// is O(start). Redis: `ZRANGE` (without options).
+    ///
+    /// ```
+    /// let mut store = squall::Store::new();
+    /// store.zadd("k", [(3.0, "c"), (1.0, "a"), (2.0, "b")]).unwrap();
+    /// assert_eq!(store.zrange("k", 0, 1).unwrap(), vec![&b"a"[..], &b"b"[..]]);
+    /// assert_eq!(store.zrange("k", -1, -1).unwrap(), vec![&b"c"[..]]);
+    /// assert!(store.zrange("k", 2, 1).unwrap().is_empty());
+    /// ```
+    pub fn zrange(
+        &self,
+        key: impl AsRef<[u8]>,
+        start: i64,
+        stop: i64,
+    ) -> Result<Vec<&[u8]>, Error> {
+        Ok(self
+            .zset(key.as_ref())?
+            .map(|z| z.window(start, stop).map(|(_, m)| m.as_slice()).collect())
+            .unwrap_or_default())
+    }
+
+    /// Like [`Store::zrange`] but returns `(member, score)` pairs.
+    /// Redis: `ZRANGE ... WITHSCORES`.
+    ///
+    /// ```
+    /// let mut store = squall::Store::new();
+    /// store.zadd("k", [(2.0, "b"), (1.0, "a")]).unwrap();
+    /// assert_eq!(
+    ///     store.zrange_withscores("k", 0, -1).unwrap(),
+    ///     vec![(&b"a"[..], 1.0), (&b"b"[..], 2.0)]
+    /// );
+    /// ```
+    pub fn zrange_withscores(
+        &self,
+        key: impl AsRef<[u8]>,
+        start: i64,
+        stop: i64,
+    ) -> Result<Vec<(&[u8], f64)>, Error> {
+        let Some(z) = self.zset(key.as_ref())? else {
+            return Ok(Vec::new());
+        };
+        Ok(z.window(start, stop)
+            .map(|(_, m)| (m.as_slice(), z.scores[m].0))
+            .collect())
     }
 }

@@ -78,7 +78,11 @@ fn negative_zero_is_same_score_and_stored_value_is_kept() {
 #[test]
 fn members_with_equal_scores_are_distinct() {
     let mut s = Store::new();
-    assert_eq!(s.zadd("k", [(1.0, "b"), (1.0, "a"), (-0.0, "c"), (0.0, "d")]).unwrap(), 4);
+    assert_eq!(
+        s.zadd("k", [(1.0, "b"), (1.0, "a"), (-0.0, "c"), (0.0, "d")])
+            .unwrap(),
+        4
+    );
     assert_eq!(s.zcard("k").unwrap(), 4);
 }
 
@@ -134,7 +138,12 @@ fn assert_original_data(s: &Store) {
     keys.sort();
     assert_eq!(
         keys,
-        vec![b"hash".to_vec(), b"list".to_vec(), b"set".to_vec(), b"str".to_vec()]
+        vec![
+            b"hash".to_vec(),
+            b"list".to_vec(),
+            b"set".to_vec(),
+            b"str".to_vec()
+        ]
     );
     assert_eq!(s.get("str").unwrap(), Some(&b"v"[..]));
     assert_eq!(s.lrange("list", 0, -1).unwrap(), vec![&b"x"[..], &b"y"[..]]);
@@ -218,4 +227,161 @@ fn zset_key_is_wrong_type_for_other_commands() {
 #[test]
 fn nan_error_displays() {
     assert!(!Error::NotAFloat.to_string().is_empty());
+}
+
+fn names(v: Vec<&[u8]>) -> Vec<&str> {
+    v.into_iter()
+        .map(|m| std::str::from_utf8(m).unwrap())
+        .collect()
+}
+
+#[test]
+fn zrange_orders_by_score() {
+    let mut s = Store::new();
+    s.zadd("k", [(3.0, "c"), (1.0, "a"), (2.0, "b")]).unwrap();
+    assert_eq!(names(s.zrange("k", 0, -1).unwrap()), ["a", "b", "c"]);
+}
+
+#[test]
+fn zrange_ties_broken_by_member_bytes() {
+    let mut s = Store::new();
+    // Inserted deliberately out of byte order, all with equal scores.
+    s.zadd(
+        "k",
+        [
+            (1.0, "pear"),
+            (1.0, "apple"),
+            (1.0, "zebra"),
+            (1.0, "mango"),
+        ],
+    )
+    .unwrap();
+    s.zadd("k", [(0.5, "zzz"), (2.0, "aaa")]).unwrap();
+    assert_eq!(
+        names(s.zrange("k", 0, -1).unwrap()),
+        ["zzz", "apple", "mango", "pear", "zebra", "aaa"]
+    );
+}
+
+#[test]
+fn zrange_tie_break_is_bytewise_not_utf8_aware() {
+    let mut s = Store::new();
+    s.zadd(
+        "k",
+        [(1.0, &b"\xff"[..]), (1.0, &b"a"[..]), (1.0, &b"B"[..])],
+    )
+    .unwrap();
+    assert_eq!(
+        s.zrange("k", 0, -1).unwrap(),
+        vec![&b"B"[..], &b"a"[..], &b"\xff"[..]]
+    );
+}
+
+#[test]
+fn zrange_negative_and_positive_zero_tie_then_bytes() {
+    let mut s = Store::new();
+    s.zadd("k", [(0.0, "b"), (-0.0, "c"), (0.0, "a"), (-0.0, "d")])
+        .unwrap();
+    s.zadd("k", [(-1.0, "neg"), (1.0, "pos")]).unwrap();
+    assert_eq!(
+        names(s.zrange("k", 0, -1).unwrap()),
+        ["neg", "a", "b", "c", "d", "pos"]
+    );
+    // zscore still returns the stored value, sign included.
+    assert!(s.zscore("k", "c").unwrap().unwrap().is_sign_negative());
+    assert!(s.zscore("k", "b").unwrap().unwrap().is_sign_positive());
+}
+
+#[test]
+fn zrange_infinite_scores_at_both_ends() {
+    let mut s = Store::new();
+    s.zadd(
+        "k",
+        [
+            (f64::INFINITY, "hi2"),
+            (0.0, "mid"),
+            (f64::NEG_INFINITY, "lo2"),
+            (f64::MAX, "max"),
+            (f64::INFINITY, "hi1"),
+            (f64::MIN, "min"),
+            (f64::NEG_INFINITY, "lo1"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        names(s.zrange("k", 0, -1).unwrap()),
+        ["lo1", "lo2", "min", "mid", "max", "hi1", "hi2"]
+    );
+}
+
+#[test]
+fn zrange_update_moves_member() {
+    let mut s = Store::new();
+    s.zadd("k", [(1.0, "a"), (2.0, "b"), (3.0, "c")]).unwrap();
+    s.zadd("k", [(10.0, "a")]).unwrap();
+    assert_eq!(names(s.zrange("k", 0, -1).unwrap()), ["b", "c", "a"]);
+}
+
+#[test]
+fn zrange_index_rules_match_lrange() {
+    let mut s = Store::new();
+    s.zadd("k", [(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")])
+        .unwrap();
+    assert_eq!(names(s.zrange("k", 1, 2).unwrap()), ["b", "c"]);
+    assert_eq!(names(s.zrange("k", -2, -1).unwrap()), ["c", "d"]);
+    assert_eq!(
+        names(s.zrange("k", -100, 100).unwrap()),
+        ["a", "b", "c", "d"]
+    );
+    assert_eq!(names(s.zrange("k", 0, 0).unwrap()), ["a"]);
+    assert_eq!(names(s.zrange("k", -1, -1).unwrap()), ["d"]);
+    assert!(s.zrange("k", 2, 1).unwrap().is_empty());
+    assert!(s.zrange("k", 4, 10).unwrap().is_empty());
+    assert!(s.zrange("k", -100, -50).unwrap().is_empty());
+    assert!(s.zrange("k", -1, -2).unwrap().is_empty());
+    assert_eq!(names(s.zrange("k", i64::MIN, i64::MAX).unwrap()).len(), 4);
+    assert!(s.zrange("k", i64::MAX, i64::MIN).unwrap().is_empty());
+}
+
+#[test]
+fn zrange_missing_key_is_empty() {
+    let s = Store::new();
+    assert!(s.zrange("nope", 0, -1).unwrap().is_empty());
+    assert!(s.zrange_withscores("nope", 0, -1).unwrap().is_empty());
+}
+
+#[test]
+fn zrange_wrong_type() {
+    let mut s = Store::new();
+    s.rpush("l", ["a"]).unwrap();
+    assert_eq!(s.zrange("l", 0, -1), Err(Error::WrongType));
+    assert_eq!(s.zrange_withscores("l", 0, -1), Err(Error::WrongType));
+}
+
+#[test]
+fn zrange_withscores_pairs() {
+    let mut s = Store::new();
+    s.zadd(
+        "k",
+        [
+            (2.5, "b"),
+            (f64::NEG_INFINITY, "a"),
+            (2.5, "a2"),
+            (9.0, "z"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        s.zrange_withscores("k", 0, -1).unwrap(),
+        vec![
+            (&b"a"[..], f64::NEG_INFINITY),
+            (&b"a2"[..], 2.5),
+            (&b"b"[..], 2.5),
+            (&b"z"[..], 9.0),
+        ]
+    );
+    assert_eq!(
+        s.zrange_withscores("k", -2, -2).unwrap(),
+        vec![(&b"b"[..], 2.5)]
+    );
 }
