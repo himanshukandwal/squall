@@ -31,6 +31,35 @@ impl Ord for Score {
     }
 }
 
+/// One end of a score range for [`Store::zrangebyscore`]. Use
+/// `f64::NEG_INFINITY` / `f64::INFINITY` for an open end. `-0.0` and `0.0`
+/// compare equal. A NaN value is rejected with [`Error::NotAFloat`].
+///
+/// ```
+/// use squall::{Bound, Store};
+/// let mut store = Store::new();
+/// store.zadd("k", [(1.0, "a"), (2.0, "b")]).unwrap();
+/// let hits = store
+///     .zrangebyscore("k", Bound::Exclusive(1.0), Bound::Inclusive(f64::INFINITY))
+///     .unwrap();
+/// assert_eq!(hits, vec![&b"b"[..]]);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Bound {
+    /// The score itself is part of the range.
+    Inclusive(f64),
+    /// The score itself is excluded from the range.
+    Exclusive(f64),
+}
+
+impl Bound {
+    fn value(self) -> f64 {
+        match self {
+            Bound::Inclusive(v) | Bound::Exclusive(v) => v,
+        }
+    }
+}
+
 /// Internal sorted set: ordered by (score, member bytes), with a member to
 /// score map for lookup and update. Never exposed publicly.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -66,6 +95,24 @@ impl ZSet {
             (stop - start + 1) as usize
         };
         self.ordered.iter().skip(start as usize).take(take)
+    }
+
+    /// Members with scores between `min` and `max`, in rank order. Seeks to
+    /// `min` in O(log n); an empty member sorts before every member, so it
+    /// is the lowest key for a score.
+    fn score_window(&self, min: Bound, max: Bound) -> impl Iterator<Item = &(Score, Vec<u8>)> {
+        let (lo, lo_open) = match min {
+            Bound::Inclusive(v) => (v, false),
+            Bound::Exclusive(v) => (v, true),
+        };
+        let (hi, hi_open) = match max {
+            Bound::Inclusive(v) => (v, false),
+            Bound::Exclusive(v) => (v, true),
+        };
+        self.ordered
+            .range((Score(lo), Vec::new())..)
+            .skip_while(move |(s, _)| lo_open && s.0 <= lo)
+            .take_while(move |(s, _)| if hi_open { s.0 < hi } else { s.0 <= hi })
     }
 
     fn remove(&mut self, member: &[u8]) -> bool {
@@ -255,6 +302,67 @@ impl Store {
         };
         Ok(z.window(start, stop)
             .map(|(_, m)| (m.as_slice(), z.scores[m].0))
+            .collect())
+    }
+
+    /// Returns the members whose score lies between `min` and `max` (see
+    /// [`Bound`]) in ascending score order (ties by member bytes). Min above
+    /// max or a missing key gives an empty result. Fails with
+    /// [`Error::NotAFloat`] if either bound is NaN, checked before the key's
+    /// type, and with [`Error::WrongType`] if the key holds a non-zset.
+    /// Redis: `ZRANGEBYSCORE`.
+    ///
+    /// ```
+    /// use squall::Bound;
+    /// let mut store = squall::Store::new();
+    /// store.zadd("k", [(1.0, "a"), (2.0, "b"), (3.0, "c")]).unwrap();
+    /// let hits = store
+    ///     .zrangebyscore("k", Bound::Inclusive(1.0), Bound::Exclusive(3.0))
+    ///     .unwrap();
+    /// assert_eq!(hits, vec![&b"a"[..], &b"b"[..]]);
+    /// ```
+    pub fn zrangebyscore(
+        &self,
+        key: impl AsRef<[u8]>,
+        min: Bound,
+        max: Bound,
+    ) -> Result<Vec<&[u8]>, Error> {
+        if min.value().is_nan() || max.value().is_nan() {
+            return Err(Error::NotAFloat);
+        }
+        Ok(self
+            .zset(key.as_ref())?
+            .map(|z| z.score_window(min, max).map(|(_, m)| m.as_slice()).collect())
+            .unwrap_or_default())
+    }
+
+    /// Like [`Store::zrangebyscore`] but returns `(member, score)` pairs.
+    /// Redis: `ZRANGEBYSCORE ... WITHSCORES`.
+    ///
+    /// ```
+    /// use squall::Bound;
+    /// let mut store = squall::Store::new();
+    /// store.zadd("k", [(1.0, "a"), (2.0, "b")]).unwrap();
+    /// let inf = Bound::Inclusive(f64::INFINITY);
+    /// assert_eq!(
+    ///     store.zrangebyscore_withscores("k", Bound::Exclusive(1.0), inf).unwrap(),
+    ///     vec![(&b"b"[..], 2.0)]
+    /// );
+    /// ```
+    pub fn zrangebyscore_withscores(
+        &self,
+        key: impl AsRef<[u8]>,
+        min: Bound,
+        max: Bound,
+    ) -> Result<Vec<(&[u8], f64)>, Error> {
+        if min.value().is_nan() || max.value().is_nan() {
+            return Err(Error::NotAFloat);
+        }
+        let Some(z) = self.zset(key.as_ref())? else {
+            return Ok(Vec::new());
+        };
+        Ok(z.score_window(min, max)
+            .map(|(s, m)| (m.as_slice(), s.0))
             .collect())
     }
 }

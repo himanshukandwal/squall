@@ -1,4 +1,4 @@
-use squall::{Error, Store};
+use squall::{Bound, Error, Store};
 
 #[test]
 fn zadd_creates_key_and_counts_new_members() {
@@ -384,4 +384,150 @@ fn zrange_withscores_pairs() {
         s.zrange_withscores("k", -2, -2).unwrap(),
         vec![(&b"b"[..], 2.5)]
     );
+}
+
+fn score_store() -> Store {
+    let mut s = Store::new();
+    s.zadd(
+        "k",
+        [
+            (f64::NEG_INFINITY, "ninf"),
+            (-0.0, "negzero"),
+            (0.0, "zero"),
+            (1.0, "a"),
+            (2.0, "b"),
+            (3.0, "c"),
+            (f64::INFINITY, "pinf"),
+        ],
+    )
+    .unwrap();
+    s
+}
+
+const NEG: Bound = Bound::Inclusive(f64::NEG_INFINITY);
+const POS: Bound = Bound::Inclusive(f64::INFINITY);
+const NO_NAMES: [&str; 0] = [];
+
+#[test]
+fn zrangebyscore_inclusive_and_exclusive_bounds() {
+    let s = score_store();
+    let r = |lo, hi| names(s.zrangebyscore("k", lo, hi).unwrap());
+    let (i, e) = (Bound::Inclusive, Bound::Exclusive);
+    assert_eq!(r(i(1.0), i(3.0)), ["a", "b", "c"]);
+    assert_eq!(r(e(1.0), i(3.0)), ["b", "c"]);
+    assert_eq!(r(i(1.0), e(3.0)), ["a", "b"]);
+    assert_eq!(r(e(1.0), e(3.0)), ["b"]);
+    assert_eq!(r(i(1.5), i(2.5)), ["b"]);
+}
+
+#[test]
+fn zrangebyscore_infinite_bounds_and_member_scores() {
+    let s = score_store();
+    let r = |lo, hi| names(s.zrangebyscore("k", lo, hi).unwrap());
+    let (i, e) = (Bound::Inclusive, Bound::Exclusive);
+    assert_eq!(
+        r(NEG, POS),
+        ["ninf", "negzero", "zero", "a", "b", "c", "pinf"]
+    );
+    // An exclusive infinite bound drops members scored exactly at infinity.
+    assert_eq!(
+        r(e(f64::NEG_INFINITY), e(f64::INFINITY)),
+        ["negzero", "zero", "a", "b", "c"]
+    );
+    assert_eq!(r(i(3.0), POS), ["c", "pinf"]);
+    assert_eq!(r(NEG, i(-1.0)), ["ninf"]);
+}
+
+#[test]
+fn zrangebyscore_signed_zero_bounds() {
+    let s = score_store();
+    let r = |lo, hi| names(s.zrangebyscore("k", lo, hi).unwrap());
+    let (i, e) = (Bound::Inclusive, Bound::Exclusive);
+    assert_eq!(r(i(0.0), i(0.0)), ["negzero", "zero"]);
+    assert_eq!(r(i(-0.0), i(-0.0)), ["negzero", "zero"]);
+    assert_eq!(r(e(-0.0), i(1.0)), ["a"]);
+    assert_eq!(r(e(0.0), i(1.0)), ["a"]);
+    assert_eq!(r(i(-1.0), e(0.0)), NO_NAMES);
+    assert_eq!(r(i(-1.0), e(-0.0)), NO_NAMES);
+}
+
+#[test]
+fn zrangebyscore_ties_ordered_by_member_bytes() {
+    let mut s = Store::new();
+    s.zadd("k", [(1.0, "b"), (1.0, "a"), (1.0, "c"), (2.0, "z")])
+        .unwrap();
+    let one = Bound::Inclusive(1.0);
+    assert_eq!(
+        names(s.zrangebyscore("k", one, one).unwrap()),
+        ["a", "b", "c"]
+    );
+}
+
+#[test]
+fn zrangebyscore_min_above_max_and_empty_intervals() {
+    let s = score_store();
+    let r = |lo, hi| names(s.zrangebyscore("k", lo, hi).unwrap());
+    let (i, e) = (Bound::Inclusive, Bound::Exclusive);
+    assert_eq!(r(i(3.0), i(1.0)), NO_NAMES);
+    assert_eq!(r(e(2.0), i(2.0)), NO_NAMES);
+    assert_eq!(r(i(2.0), e(2.0)), NO_NAMES);
+    assert_eq!(r(POS, NEG), NO_NAMES);
+}
+
+#[test]
+fn zrangebyscore_missing_key_is_empty() {
+    let s = Store::new();
+    assert!(s.zrangebyscore("nope", NEG, POS).unwrap().is_empty());
+    assert!(
+        s.zrangebyscore_withscores("nope", NEG, POS)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn zrangebyscore_withscores_pairs() {
+    let s = score_store();
+    assert_eq!(
+        s.zrangebyscore_withscores("k", Bound::Exclusive(0.0), POS)
+            .unwrap(),
+        vec![
+            (&b"a"[..], 1.0),
+            (&b"b"[..], 2.0),
+            (&b"c"[..], 3.0),
+            (&b"pinf"[..], f64::INFINITY),
+        ]
+    );
+}
+
+#[test]
+fn zrangebyscore_nan_bound_rejected_before_type_check_and_missing_key() {
+    let mut s = full_store();
+    s.zadd("z", [(1.0, "a")]).unwrap();
+    let nan = Bound::Inclusive(f64::NAN);
+    let xnan = Bound::Exclusive(f64::NAN);
+    for key in ["z", "missing", "str", "list", "hash", "set"] {
+        assert_eq!(s.zrangebyscore(key, nan, POS), Err(Error::NotAFloat));
+        assert_eq!(s.zrangebyscore(key, NEG, xnan), Err(Error::NotAFloat));
+        assert_eq!(
+            s.zrangebyscore_withscores(key, nan, POS),
+            Err(Error::NotAFloat)
+        );
+        assert_eq!(
+            s.zrangebyscore_withscores(key, NEG, xnan),
+            Err(Error::NotAFloat)
+        );
+    }
+}
+
+#[test]
+fn zrangebyscore_wrong_type() {
+    let s = full_store();
+    for key in ["str", "list", "hash", "set"] {
+        assert_eq!(s.zrangebyscore(key, NEG, POS), Err(Error::WrongType));
+        assert_eq!(
+            s.zrangebyscore_withscores(key, NEG, POS),
+            Err(Error::WrongType)
+        );
+    }
 }
