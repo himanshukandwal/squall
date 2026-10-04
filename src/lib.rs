@@ -8,6 +8,7 @@ mod sets;
 mod store;
 mod strings;
 mod value;
+mod zsets;
 
 pub use error::Error;
 pub use store::Store;
