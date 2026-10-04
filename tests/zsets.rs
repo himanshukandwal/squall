@@ -590,7 +590,7 @@ fn zrangebyscore_exclusive_skips_all_ties_and_handles_empty_member() {
     let r = |lo, hi| names(s.zrangebyscore("k", lo, hi).unwrap());
     let (i, e) = (Bound::Inclusive, Bound::Exclusive);
     assert_eq!(r(i(1.0), i(1.0)), ["", "a", "b"]);
-    assert_eq!(r(e(1.0), i(2.0)), ["", "c"]);
+    assert_eq!(r(e(1.0), i(2.0)), ["c", "d"]);
     assert_eq!(r(i(1.0), e(2.0)), ["", "a", "b"]);
 }
 
