@@ -531,3 +531,76 @@ fn zrangebyscore_wrong_type() {
         );
     }
 }
+
+#[test]
+fn zrangebyscore_wrong_type_and_nan_leave_store_unchanged() {
+    for key in ["str", "list", "hash", "set"] {
+        let s = full_store();
+        assert_eq!(s.zrangebyscore(key, NEG, POS), Err(Error::WrongType));
+        assert_eq!(
+            s.zrangebyscore_withscores(key, NEG, POS),
+            Err(Error::WrongType)
+        );
+        let nan = Bound::Inclusive(f64::NAN);
+        assert_eq!(s.zrangebyscore(key, nan, nan), Err(Error::NotAFloat));
+        assert_original_data(&s);
+    }
+}
+
+#[test]
+fn zrangebyscore_is_read_only_and_does_not_create_keys() {
+    let s = Store::new();
+    s.zrangebyscore("nope", NEG, POS).unwrap();
+    assert!(!s.exists("nope"));
+    let s = score_store();
+    let before = s.zrange_withscores("k", 0, -1).unwrap();
+    s.zrangebyscore("k", Bound::Exclusive(1.0), POS).unwrap();
+    assert_eq!(s.zrange_withscores("k", 0, -1).unwrap(), before);
+}
+
+#[test]
+fn zrangebyscore_withscores_returns_stored_negative_zero() {
+    let s = score_store();
+    let z = Bound::Inclusive(0.0);
+    let got = s.zrangebyscore_withscores("k", z, z).unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].0, b"negzero");
+    assert!(got[0].1 == 0.0 && got[0].1.is_sign_negative());
+    assert_eq!(got[1].0, b"zero");
+    assert!(got[1].1.is_sign_positive());
+}
+
+#[test]
+fn zrangebyscore_exclusive_infinite_ends_and_degenerate_ranges() {
+    let s = score_store();
+    let r = |lo, hi| names(s.zrangebyscore("k", lo, hi).unwrap());
+    let e = Bound::Exclusive;
+    assert_eq!(r(e(f64::INFINITY), POS), NO_NAMES);
+    assert_eq!(r(NEG, e(f64::NEG_INFINITY)), NO_NAMES);
+    assert_eq!(r(POS, POS), ["pinf"]);
+    assert_eq!(r(NEG, NEG), ["ninf"]);
+    assert_eq!(r(e(f64::NEG_INFINITY), e(f64::NEG_INFINITY)), NO_NAMES);
+}
+
+#[test]
+fn zrangebyscore_exclusive_skips_all_ties_and_handles_empty_member() {
+    let mut s = Store::new();
+    s.zadd("k", [(1.0, ""), (1.0, "a"), (1.0, "b"), (2.0, "c"), (2.0, "d")])
+        .unwrap();
+    let r = |lo, hi| names(s.zrangebyscore("k", lo, hi).unwrap());
+    let (i, e) = (Bound::Inclusive, Bound::Exclusive);
+    assert_eq!(r(i(1.0), i(1.0)), ["", "a", "b"]);
+    assert_eq!(r(e(1.0), i(2.0)), ["", "c"]);
+    assert_eq!(r(i(1.0), e(2.0)), ["", "a", "b"]);
+}
+
+#[test]
+fn zrangebyscore_updated_and_removed_members_follow_current_scores() {
+    let mut s = Store::new();
+    s.zadd("k", [(1.0, "a"), (2.0, "b"), (3.0, "c")]).unwrap();
+    s.zadd("k", [(10.0, "a")]).unwrap();
+    s.zrem("k", ["c"]).unwrap();
+    let r = |lo, hi| names(s.zrangebyscore("k", lo, hi).unwrap());
+    assert_eq!(r(Bound::Inclusive(0.0), Bound::Inclusive(5.0)), ["b"]);
+    assert_eq!(r(Bound::Inclusive(10.0), POS), ["a"]);
+}
