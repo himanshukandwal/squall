@@ -12,6 +12,8 @@ pub enum Error {
     NotAnInteger,
     /// The arithmetic result does not fit in an `i64`.
     Overflow,
+    /// A score or score bound is NaN.
+    NotAFloat,
 }
 
 impl fmt::Display for Error {
@@ -22,6 +24,7 @@ impl fmt::Display for Error {
             }
             Error::NotAnInteger => f.write_str("value is not an integer"),
             Error::Overflow => f.write_str("increment or decrement would overflow"),
+            Error::NotAFloat => f.write_str("score is not a number"),
         }
     }
 }
