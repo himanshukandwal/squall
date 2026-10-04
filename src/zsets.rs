@@ -66,8 +66,9 @@ impl Store {
     /// missing, and returns how many members were newly added. An existing
     /// member's score is updated and not counted; for duplicates within the
     /// call the last score wins. Fails with [`Error::NotAFloat`] if any score
-    /// is NaN (nothing is changed) and with [`Error::WrongType`] if the key
-    /// holds a non-zset. Infinite scores are allowed. Redis: `ZADD` (without
+    /// is NaN (nothing is changed), checked before the key's type as Redis
+    /// does, and with [`Error::WrongType`] if the key holds a non-zset.
+    /// Infinite scores are allowed. Redis: `ZADD` (without
     /// flags).
     ///
     /// ```
@@ -83,14 +84,15 @@ impl Store {
         members: impl IntoIterator<Item = (f64, M)>,
     ) -> Result<usize, Error> {
         let key = key.as_ref();
+        // Scores are validated before the key is looked up, as Redis does.
+        let members: Vec<(f64, M)> = members.into_iter().collect();
+        if members.iter().any(|(score, _)| score.is_nan()) {
+            return Err(Error::NotAFloat);
+        }
         if let Some(v) = self.map.get(key)
             && !matches!(v, Value::ZSet(_))
         {
             return Err(Error::WrongType);
-        }
-        let members: Vec<(f64, M)> = members.into_iter().collect();
-        if members.iter().any(|(score, _)| score.is_nan()) {
-            return Err(Error::NotAFloat);
         }
         if members.is_empty() {
             return Ok(0);

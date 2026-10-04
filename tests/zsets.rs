@@ -1,13 +1,5 @@
 use squall::{Error, Store};
 
-fn wrong_type_store() -> Store {
-    let mut s = Store::new();
-    s.set("str", "v");
-    s.rpush("list", ["a"]).unwrap();
-    s.sadd("set", ["a"]).unwrap();
-    s
-}
-
 #[test]
 fn zadd_creates_key_and_counts_new_members() {
     let mut s = Store::new();
@@ -128,26 +120,78 @@ fn zrem_duplicate_members_counted_once() {
     assert_eq!(s.zrem("k", ["a", "a"]).unwrap(), 1);
 }
 
+fn full_store() -> Store {
+    let mut s = Store::new();
+    s.set("str", "v");
+    s.rpush("list", ["x", "y"]).unwrap();
+    s.hset("hash", "f", "1").unwrap();
+    s.sadd("set", ["m"]).unwrap();
+    s
+}
+
+fn assert_original_data(s: &Store) {
+    let mut keys = s.keys();
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec![b"hash".to_vec(), b"list".to_vec(), b"set".to_vec(), b"str".to_vec()]
+    );
+    assert_eq!(s.get("str").unwrap(), Some(&b"v"[..]));
+    assert_eq!(s.lrange("list", 0, -1).unwrap(), vec![&b"x"[..], &b"y"[..]]);
+    assert_eq!(s.hgetall("hash").unwrap(), vec![(&b"f"[..], &b"1"[..])]);
+    assert_eq!(s.smembers("set").unwrap(), vec![&b"m"[..]]);
+    assert_eq!(s.llen("list").unwrap(), 2);
+    assert_eq!(s.hlen("hash").unwrap(), 1);
+    assert_eq!(s.scard("set").unwrap(), 1);
+}
+
 #[test]
 fn wrong_type_on_every_command_changes_nothing() {
-    for key in ["str", "list", "set"] {
-        let mut s = wrong_type_store();
-        let mut before = s.keys();
-        before.sort();
+    for key in ["str", "list", "hash", "set"] {
+        let mut s = full_store();
         assert_eq!(s.zadd(key, [(1.0, "a")]), Err(Error::WrongType));
         assert_eq!(s.zscore(key, "a"), Err(Error::WrongType));
         assert_eq!(s.zcard(key), Err(Error::WrongType));
-        assert_eq!(s.zrem(key, ["a"]), Err(Error::WrongType));
-        let mut after = s.keys();
-        after.sort();
-        assert_eq!(after, before);
-        assert!(!s.exists("a"));
+        assert_eq!(s.zrem(key, ["a", "x", "m", "f"]), Err(Error::WrongType));
+        assert_original_data(&s);
     }
 }
 
 #[test]
+fn nan_on_wrong_type_key_is_not_a_float_and_changes_nothing() {
+    for key in ["str", "list", "hash", "set"] {
+        let mut s = full_store();
+        assert_eq!(
+            s.zadd(key, [(1.0, "a"), (f64::NAN, "b")]),
+            Err(Error::NotAFloat)
+        );
+        assert_original_data(&s);
+    }
+}
+
+#[test]
+fn zrem_duplicates_and_misses_leave_other_members_intact() {
+    let mut s = Store::new();
+    s.zadd("k", [(1.0, "a"), (2.0, "b"), (3.0, "c")]).unwrap();
+    assert_eq!(s.zrem("k", ["a", "a", "nope"]).unwrap(), 1);
+    assert_eq!(s.zcard("k").unwrap(), 2);
+    assert_eq!(s.zscore("k", "b").unwrap(), Some(2.0));
+    assert_eq!(s.zscore("k", "c").unwrap(), Some(3.0));
+    assert_eq!(s.zscore("k", "a").unwrap(), None);
+}
+
+#[test]
+fn zrem_with_no_members_on_existing_zset_changes_nothing() {
+    let mut s = Store::new();
+    s.zadd("k", [(1.0, "a")]).unwrap();
+    assert_eq!(s.zrem("k", Vec::<&str>::new()).unwrap(), 0);
+    assert_eq!(s.zcard("k").unwrap(), 1);
+    assert_eq!(s.zscore("k", "a").unwrap(), Some(1.0));
+}
+
+#[test]
 fn zadd_wrong_type_with_empty_batch_still_fails() {
-    let mut s = wrong_type_store();
+    let mut s = full_store();
     assert_eq!(
         s.zadd("str", Vec::<(f64, &str)>::new()),
         Err(Error::WrongType)
