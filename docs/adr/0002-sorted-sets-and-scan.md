@@ -31,7 +31,7 @@ Follow ADR 0001 (Redis-faithful names, borrowed reads, `&mut self`, one
   Redis glob (`*`, `?`, classes, ranges, negation, `\` escape), byte-based,
   never erroring on odd patterns. `keys()` is unchanged (`KEYS *`).
 - **Data structure.** A private `BTreeSet<(Score, Vec<u8>)>` for order plus
-  a `HashMap<Vec<u8>, f64>` for member lookup, std only. `Score` is a private
+  a `HashMap<Vec<u8>, Score>` for member lookup, std only. `Score` is a private
   total-order wrapper over non-NaN `f64`.
 
 ## Alternatives considered
