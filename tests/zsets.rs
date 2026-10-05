@@ -75,6 +75,44 @@ fn negative_zero_is_same_score_and_stored_value_is_kept() {
     assert_eq!(s.zcard("k").unwrap(), 1);
 }
 
+fn assert_single_zero_with_sign(s: &Store, negative: bool) {
+    let got = s.zscore("k", "a").unwrap().unwrap();
+    assert_eq!(got, 0.0);
+    assert_eq!(got.is_sign_negative(), negative, "zscore sign");
+    let ranged = s.zrange_withscores("k", 0, -1).unwrap();
+    assert_eq!(ranged.len(), 1, "zrange_withscores len");
+    assert_eq!(ranged[0].0, b"a");
+    assert_eq!(ranged[0].1.is_sign_negative(), negative, "zrange sign");
+    let by_score = s
+        .zrangebyscore_withscores("k", Bound::Inclusive(-1.0), Bound::Inclusive(1.0))
+        .unwrap();
+    assert_eq!(by_score.len(), 1, "zrangebyscore_withscores len");
+    assert_eq!(by_score[0].0, b"a");
+    assert_eq!(
+        by_score[0].1.is_sign_negative(),
+        negative,
+        "zrangebyscore sign"
+    );
+    assert_eq!(s.zcard("k").unwrap(), 1);
+}
+
+#[test]
+fn readding_member_with_opposite_zero_sign_stores_the_new_sign() {
+    // -0.0 then 0.0 stores positive.
+    let mut s = Store::new();
+    s.zadd("k", [(-0.0, "a")]).unwrap();
+    assert_single_zero_with_sign(&s, true);
+    assert_eq!(s.zadd("k", [(0.0, "a")]).unwrap(), 0);
+    assert_single_zero_with_sign(&s, false);
+
+    // 0.0 then -0.0 stores negative.
+    let mut s = Store::new();
+    s.zadd("k", [(0.0, "a")]).unwrap();
+    assert_single_zero_with_sign(&s, false);
+    assert_eq!(s.zadd("k", [(-0.0, "a")]).unwrap(), 0);
+    assert_single_zero_with_sign(&s, true);
+}
+
 #[test]
 fn members_with_equal_scores_are_distinct() {
     let mut s = Store::new();
