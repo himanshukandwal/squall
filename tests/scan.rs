@@ -63,9 +63,10 @@ fn matches_keys_of_every_type() {
     s.lpush("k:list", ["a"]).unwrap();
     s.sadd("k:set", ["a"]).unwrap();
     s.hset("k:hash", "f", "v").unwrap();
+    s.zadd("k:zset", [(1.0, "a")]).unwrap();
     assert_eq!(
         scan(&s, "k:*"),
-        set_of(&["k:string", "k:list", "k:set", "k:hash"])
+        set_of(&["k:string", "k:list", "k:set", "k:hash", "k:zset"])
     );
 }
 
