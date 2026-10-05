@@ -8,8 +8,16 @@ fast.
 
 A library of data structures you use from Rust code:
 
-- a **keyspace**: set, get, delete, check and list keys;
-- **strings**, **lists**, **hashes** and **sets** as values.
+- a **keyspace**: set, get, delete, check and list keys, plus `scan(pattern)`
+  to find keys by Redis-style glob (a single call, like `KEYS pattern`, no
+  cursor);
+- **strings**, **lists**, **hashes**, **sets** and **sorted sets** as values.
+
+Sorted sets (`zadd`, `zscore`, `zrem`, `zcard`, `zrange`, `zrange_withscores`,
+`zrangebyscore`, `zrangebyscore_withscores`) order members by `f64` score,
+then member bytes. Score ranges take a `Bound` (`Inclusive` or `Exclusive`).
+A NaN score or bound fails with `Error::NotAFloat`. Not supported: `ZADD`
+flags and `zincrby`. Index-range `zrange` is O(n) to skip to the start.
 
 ## What it isn't
 

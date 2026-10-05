@@ -7,4 +7,5 @@ pub(crate) enum Value {
     List(VecDeque<Vec<u8>>),
     Hash(HashMap<Vec<u8>, Vec<u8>>),
     Set(HashSet<Vec<u8>>),
+    ZSet(crate::zsets::ZSet),
 }
