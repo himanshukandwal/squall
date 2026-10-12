@@ -71,8 +71,9 @@ errors. `keys()` returns all keys, like `KEYS *`.
 ## Behaviour terms
 
 **Missing key**
-A Key not in the Keyspace. Reads treat it as empty (`None`, an empty result,
-or 0). Creating writes (`append`, pushes, `hset`, `sadd`, `zadd`, counters) create it.
+A Key not in the Keyspace, or an Expired key. Reads treat it as empty (`None`,
+an empty result, or 0), never `WrongType`, and `len`, `keys` and `scan` leave
+it out. Creating writes (`append`, pushes, `hset`, `sadd`, `zadd`, counters) create it.
 
 **TTL / deadline**
 A Key may carry a TTL (time to live), set with `expire` and removed with

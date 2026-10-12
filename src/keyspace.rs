@@ -60,8 +60,8 @@ impl Store {
         self.lookup(key.as_ref()).is_some()
     }
 
-    /// Returns all keys as owned byte vectors, in unspecified order. Redis:
-    /// `KEYS *` (no glob support).
+    /// Returns all keys as owned byte vectors, in unspecified order; Expired
+    /// keys are left out. Redis: `KEYS *` (no glob support).
     ///
     /// ```
     /// let mut store = squall::Store::new();
@@ -73,8 +73,8 @@ impl Store {
     }
 
     /// Returns the keys matching a Redis-style glob `pattern`, in unspecified
-    /// order, for keys of every type. Redis: `KEYS pattern` (single call, no
-    /// cursor).
+    /// order, for keys of every type; Expired keys are left out. Redis:
+    /// `KEYS pattern` (single call, no cursor).
     ///
     /// Supports `*`, `?`, `[abc]`, ranges `[a-z]`, negation `[^a]` and `\`
     /// escapes. Matching is byte-based and case-sensitive; odd patterns never
@@ -94,7 +94,8 @@ impl Store {
             .collect()
     }
 
-    /// Returns the number of keys in the store. Redis: `DBSIZE`.
+    /// Returns the number of keys in the store, not counting Expired keys.
+    /// Redis: `DBSIZE`.
     ///
     /// ```
     /// let mut store = squall::Store::new();
