@@ -245,9 +245,12 @@ fn failing_commands_leave_values_and_ttls_unchanged() {
     s.set("max", i64::MAX.to_string());
     s.rpush("list", ["a"]).unwrap();
     s.zadd("z", [(1.0, "m")]).unwrap();
+    s.hset("hash", "f", "v").unwrap();
+    s.sadd("set", ["m"]).unwrap();
     s.set("persistent", "p");
     s.set_ex("doomed", "d", SEC);
-    for key in ["str", "max", "list", "z"] {
+    let with_ttl = ["str", "max", "list", "z", "hash", "set"];
+    for key in with_ttl {
         s.expire(key, 10 * SEC);
     }
     clock.advance(SEC);
@@ -259,18 +262,24 @@ fn failing_commands_leave_values_and_ttls_unchanged() {
     assert_eq!(s.lpush("z", ["x"]), Err(Error::WrongType));
     assert_eq!(s.zadd("z", [(f64::NAN, "n")]), Err(Error::NotAFloat));
     assert_eq!(s.zadd("list", [(1.0, "n")]), Err(Error::WrongType));
+    assert_eq!(s.incr("hash"), Err(Error::WrongType));
+    assert_eq!(s.sadd("hash", ["x"]), Err(Error::WrongType));
+    assert_eq!(s.hset("set", "f", "x"), Err(Error::WrongType));
+    assert_eq!(s.rpush("set", ["x"]), Err(Error::WrongType));
 
     assert_eq!(s.get("str").unwrap(), Some(&b"abc"[..]));
     assert_eq!(s.get("max").unwrap(), Some(i64::MAX.to_string().as_bytes()));
     assert_eq!(s.lrange("list", 0, -1).unwrap(), vec![&b"a"[..]]);
     assert_eq!(s.zscore("z", "m").unwrap(), Some(1.0));
     assert_eq!(s.zscore("z", "n").unwrap(), None);
+    assert_eq!(s.hget("hash", "f").unwrap(), Some(&b"v"[..]));
+    assert_eq!(s.smembers("set").unwrap(), vec![&b"m"[..]]);
     assert_eq!(s.get("persistent").unwrap(), Some(&b"p"[..]));
-    for key in ["str", "max", "list", "z"] {
+    for key in with_ttl {
         assert_eq!(s.ttl(key), Ttl::Remaining(9 * SEC), "{key}");
     }
     assert_eq!(s.ttl("persistent"), Ttl::Persistent);
     assert_eq!(s.ttl("doomed"), Ttl::Missing);
     assert!(!s.exists("doomed"));
-    assert_eq!(s.len(), 5);
+    assert_eq!(s.len(), 7);
 }
