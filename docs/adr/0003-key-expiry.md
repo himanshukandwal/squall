@@ -49,7 +49,10 @@ removed, where time comes from, and how writes treat an existing TTL.
 
 - **Touch-only reaping plus a caller-driven purge** (Expired keys removed
   only when a command touches them). Rejected: memory grows without bound
-  unless callers remember to purge, and an exact `len` costs O(expired).
+  unless callers remember to purge, and an exact `len` costs O(expired),
+  where that backlog also grows without bound. The chosen design's `len` is
+  O(due keys) too, but the next write's drain or `purge_expired()` bounds
+  the backlog.
 - **Background expiry thread.** Rejected: needs internal locking, which ADR
   0001 rules out, and makes tests timing-dependent.
 - **Random sampling** (Redis active expiry). Rejected: memory is only
@@ -72,5 +75,8 @@ removed, where time comes from, and how writes treat an existing TTL.
   show latency spikes.
 - Memory used by Expired keys is reclaimed on the next write, or by
   `purge_expired()` during read-only phases.
+- `len` costs O(due keys): one look at the earliest deadline when nothing
+  is due, but in a read-only phase it walks every Expired key not yet
+  drained. The next write or `purge_expired()` resets it.
 - `Store`'s `Debug` and `Default` are hand-written; it stays `Send + Sync`
   with any `Clock`.
