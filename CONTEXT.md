@@ -74,6 +74,36 @@ errors. `keys()` returns all keys, like `KEYS *`.
 A Key not in the Keyspace. Reads treat it as empty (`None`, an empty result,
 or 0). Creating writes (`append`, pushes, `hset`, `sadd`, `zadd`, counters) create it.
 
+**TTL / deadline**
+A Key may carry a TTL (time to live), set with `expire` and removed with
+`persist`. It is stored as a deadline: the `Instant` at which the Key
+expires. A Key without one never expires. `expire` on a missing Key does
+nothing and returns `false`; `Duration::ZERO` deletes the Key at once; a
+deadline that would overflow `Instant` means no TTL. `del` and the removal
+of an emptied container drop the TTL, so a recreated Key starts without one.
+
+**Expired key**
+A Key whose deadline is `<= now`. Every command treats it as a Missing key.
+Reads (`&self`) never delete it; every mutating command first removes all
+Expired keys from memory.
+
+**Clock**
+The `Send + Sync` trait a Store reads the current `Instant` from, chosen at
+creation: `Store::new()` uses `SystemClock` (the system's monotonic clock);
+`Store::with_clock` takes any `Clock`. `ManualClock` is a handle for tests
+whose clones share one time; it starts at the real now and moves only
+forward with `advance(Duration)`.
+
+**Ttl**
+What `ttl(key)` returns: `Ttl::Missing` (missing or Expired key, Redis
+`-2`), `Ttl::Persistent` (no TTL, Redis `-1`) or `Ttl::Remaining(Duration)`
+(the exact time left).
+
+**purge_expired**
+`purge_expired() -> usize` removes every Expired key from memory now and
+returns how many. Only needed during read-only phases, since every mutating
+command already does this first.
+
 **WrongType / NotAnInteger / Overflow / NotAFloat**
 The variants of the single `Error` enum (`#[non_exhaustive]`). A command that
 returns an error has made no change to the Store.
@@ -82,5 +112,5 @@ the key's Type, as Redis does.
 
 ## Not in scope
 
-No server or network protocol, persistence, or key expiry. See
+No server or network protocol or persistence. See
 `docs/adr/` for design decisions.

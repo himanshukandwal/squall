@@ -12,6 +12,7 @@ impl Store {
     /// assert_eq!(store.get("name").unwrap(), Some(&b"squall"[..]));
     /// ```
     pub fn set(&mut self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
+        self.drain_expired();
         self.put(key.as_ref(), Value::String(value.as_ref().to_vec()));
     }
 
@@ -43,6 +44,7 @@ impl Store {
     /// assert!(!store.del("k"));
     /// ```
     pub fn del(&mut self, key: impl AsRef<[u8]>) -> bool {
+        self.drain_expired();
         self.remove_key(key.as_ref())
     }
 

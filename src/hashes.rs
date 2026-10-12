@@ -31,6 +31,7 @@ impl Store {
         field: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
     ) -> Result<bool, Error> {
+        self.drain_expired();
         let entry = self.lookup_or_create(key.as_ref(), || Value::Hash(Hash::new()));
         match entry {
             Value::Hash(h) => Ok(h
@@ -78,6 +79,7 @@ impl Store {
         I: IntoIterator,
         I::Item: AsRef<[u8]>,
     {
+        self.drain_expired();
         let key = key.as_ref();
         let (removed, empty) = match self.lookup_mut(key) {
             None => return Ok(0),
