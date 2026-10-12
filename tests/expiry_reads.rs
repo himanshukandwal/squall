@@ -83,14 +83,27 @@ fn assert_live(s: &Store, key: &str) {
             assert_eq!(got, Err(Error::WrongType), "{key} read as {own}");
         }
     };
+    own_or_wrongtype("str", s.get(key).map(|v| v == Some(&b"v"[..])));
     own_or_wrongtype("str", s.strlen(key).map(|n| n == 1));
     own_or_wrongtype("list", s.llen(key).map(|n| n == 1));
+    own_or_wrongtype("list", s.lindex(key, 0).map(|v| v == Some(&b"a"[..])));
     own_or_wrongtype("list", s.lrange(key, 0, -1).map(|v| v.len() == 1));
+    own_or_wrongtype("hash", s.hget(key, "f").map(|v| v == Some(&b"v"[..])));
     own_or_wrongtype("hash", s.hexists(key, "f"));
+    own_or_wrongtype("hash", s.hlen(key).map(|n| n == 1));
+    own_or_wrongtype("hash", s.hkeys(key).map(|v| v.len() == 1));
     own_or_wrongtype("hash", s.hgetall(key).map(|v| v.len() == 1));
     own_or_wrongtype("set", s.sismember(key, "m"));
+    own_or_wrongtype("set", s.scard(key).map(|n| n == 1));
     own_or_wrongtype("set", s.smembers(key).map(|v| v.len() == 1));
     own_or_wrongtype("zset", s.zscore(key, "m").map(|v| v == Some(1.0)));
+    own_or_wrongtype("zset", s.zcard(key).map(|n| n == 1));
+    own_or_wrongtype("zset", s.zrange(key, 0, -1).map(|v| v.len() == 1));
+    own_or_wrongtype(
+        "zset",
+        s.zrange_withscores(key, 0, -1).map(|v| v.len() == 1),
+    );
+    own_or_wrongtype("zset", s.zrangebyscore(key, min, max).map(|v| v.len() == 1));
     own_or_wrongtype(
         "zset",
         s.zrangebyscore_withscores(key, min, max)
