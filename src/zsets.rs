@@ -148,13 +148,16 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = (f64, M)>,
     ) -> Result<usize, Error> {
+        self.drain_expired();
         let key = key.as_ref();
         // Scores are validated before the key is looked up, as Redis does.
         let members: Vec<(f64, M)> = members.into_iter().collect();
         if members.iter().any(|(score, _)| score.is_nan()) {
             return Err(Error::NotAFloat);
         }
-        if let Some(v) = self.lookup(key)
+        // `lookup_mut`, not `lookup`: after the drain every Key is live, and
+        // this must agree with `lookup_or_create` below.
+        if let Some(v) = self.lookup_mut(key)
             && !matches!(v, Value::ZSet(_))
         {
             return Err(Error::WrongType);
@@ -227,6 +230,7 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
+        self.drain_expired();
         let key = key.as_ref();
         let (removed, now_empty) = match self.lookup_mut(key) {
             None => return Ok(0),

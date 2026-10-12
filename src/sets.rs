@@ -19,8 +19,11 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
+        self.drain_expired();
         let key = key.as_ref();
-        if let Some(v) = self.lookup(key)
+        // `lookup_mut`, not `lookup`: after the drain every Key is live, and
+        // this must agree with `lookup_or_create` below.
+        if let Some(v) = self.lookup_mut(key)
             && !matches!(v, Value::Set(_))
         {
             return Err(Error::WrongType);
@@ -53,6 +56,7 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
+        self.drain_expired();
         let key = key.as_ref();
         let (removed, now_empty) = match self.lookup_mut(key) {
             None => return Ok(0),

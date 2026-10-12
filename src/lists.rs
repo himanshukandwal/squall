@@ -26,6 +26,7 @@ impl Store {
         values: impl IntoIterator<Item = impl AsRef<[u8]>>,
         front: bool,
     ) -> Result<usize, Error> {
+        self.drain_expired();
         let list = match self.lookup_or_create(key, || Value::List(VecDeque::new())) {
             Value::List(l) => l,
             _ => return Err(Error::WrongType),
@@ -47,6 +48,7 @@ impl Store {
     }
 
     fn pop(&mut self, key: &[u8], front: bool) -> Result<Option<Vec<u8>>, Error> {
+        self.drain_expired();
         let list = match self.lookup_mut(key) {
             None => return Ok(None),
             Some(Value::List(l)) => l,
