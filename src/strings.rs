@@ -36,8 +36,8 @@ impl Store {
         key: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
     ) -> Result<usize, Error> {
-        self.drain_expired();
-        match self.lookup_mut(key.as_ref()) {
+        let drained = self.drain_expired();
+        match self.lookup_mut(key.as_ref(), drained) {
             None => {
                 let value = value.as_ref().to_vec();
                 let len = value.len();
@@ -107,11 +107,11 @@ impl Store {
     /// assert_eq!(store.incrby("n", i64::MAX), Err(squall::Error::Overflow));
     /// ```
     pub fn incrby(&mut self, key: impl AsRef<[u8]>, by: i64) -> Result<i64, Error> {
-        self.drain_expired();
+        let drained = self.drain_expired();
         let key = key.as_ref();
         // Update an existing string in place (rather than replacing the
         // entry) so per-Key metadata survives; errors leave it untouched.
-        match self.lookup_mut(key) {
+        match self.lookup_mut(key, drained) {
             None => {
                 // A missing key counts as 0, so `0 + by` cannot overflow.
                 self.put(key, Value::String(by.to_string().into_bytes()));

@@ -87,8 +87,8 @@ impl Store {
     pub fn expire(&mut self, key: impl AsRef<[u8]>, ttl: Duration) -> bool {
         let key = key.as_ref();
         let now = self.now();
-        self.drain_due(now);
-        if self.lookup_mut(key).is_none() {
+        let drained = self.drain_due(now);
+        if self.lookup_mut(key, drained).is_none() {
             return false;
         }
         if ttl.is_zero() {
@@ -174,6 +174,6 @@ impl Store {
     /// assert_eq!(store.purge_expired(), 0);
     /// ```
     pub fn purge_expired(&mut self) -> usize {
-        self.drain_expired()
+        self.remove_expired()
     }
 }
