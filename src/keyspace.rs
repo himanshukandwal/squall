@@ -95,7 +95,8 @@ impl Store {
     }
 
     /// Returns the number of keys in the store, not counting Expired keys.
-    /// Redis: `DBSIZE`.
+    /// Redis: `DBSIZE`. Cheap when no Key is due; otherwise linear in the
+    /// Expired keys not yet removed by a write or `purge_expired`.
     ///
     /// ```
     /// let mut store = squall::Store::new();
