@@ -12,8 +12,8 @@ impl Store {
     /// assert_eq!(store.get("name").unwrap(), Some(&b"squall"[..]));
     /// ```
     pub fn set(&mut self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
-        self.drain_expired();
-        self.put(key.as_ref(), Value::String(value.as_ref().to_vec()));
+        let drained = self.drain_expired();
+        self.put(key.as_ref(), drained, Value::String(value.as_ref().to_vec()));
     }
 
     /// Returns the string stored at `key`, or `None` if the key is missing.
@@ -44,8 +44,8 @@ impl Store {
     /// assert!(!store.del("k"));
     /// ```
     pub fn del(&mut self, key: impl AsRef<[u8]>) -> bool {
-        self.drain_expired();
-        self.remove_key(key.as_ref())
+        let drained = self.drain_expired();
+        self.remove_key(key.as_ref(), drained)
     }
 
     /// Returns whether `key` exists, regardless of its type. Redis: `EXISTS`.

@@ -42,7 +42,7 @@ impl Store {
         let len = list.len();
         // Pushing no values onto a missing key must not leave an empty list.
         if len == 0 {
-            self.remove_key(key);
+            self.remove_key(key, drained);
         }
         Ok(len)
     }
@@ -56,7 +56,7 @@ impl Store {
         };
         let item = if front { list.pop_front() } else { list.pop_back() };
         if list.is_empty() {
-            self.remove_key(key);
+            self.remove_key(key, drained);
         }
         Ok(item)
     }

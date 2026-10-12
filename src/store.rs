@@ -32,10 +32,13 @@ pub(crate) fn is_expired(deadline: Instant, now: Instant) -> bool {
     deadline <= now
 }
 
-/// Proof that the current command has drained the Expired keys, so the write
-/// lookups cannot see one. Only `drain_expired` and `drain_due` make one: the
-/// private field keeps other modules from building it, and since the Store
-/// cannot hold one, a command can only get it from its own drain.
+/// Proof that the current command has drained the Expired keys, so the
+/// `&mut` helpers cannot see one. Every `&mut` helper except the drains
+/// themselves requires it: `lookup_mut`, `lookup_or_create`, `put`,
+/// `remove_key`, `set_deadline` and `clear_deadline`. Only `drain_expired`
+/// and `drain_due` make one: the private field keeps other modules from
+/// building it, and since the Store cannot hold one, a command can only get
+/// it from its own drain.
 #[derive(Clone, Copy)]
 pub(crate) struct Drained(());
 
@@ -43,10 +46,12 @@ pub(crate) struct Drained(());
 // `index` directly.
 //
 // `&mut self` commands call `drain_expired` (or `drain_due`) first, so the
-// other `&mut` helpers never see an Expired key; the write lookups require
-// the resulting `Drained`, so skipping the drain does not compile. `lookup`
-// is for `&self` reads, which never delete, so it filters Expired keys
-// instead.
+// other `&mut` helpers never see an Expired key. Every one of those helpers
+// requires the resulting `Drained`, so a `&mut` command that skips the drain
+// does not compile. The drain internals (`remove_expired`, `remove_due`)
+// produce the token rather than take it. `purge_expired` uses
+// `remove_expired` directly, as it calls no other helper. `lookup` is for
+// `&self` reads, which never delete, so it filters Expired keys instead.
 impl Store {
     /// Looks up `key` for reading. An Expired key reads as missing.
     pub(crate) fn lookup(&self, key: &[u8]) -> Option<&Value> {
@@ -82,15 +87,15 @@ impl Store {
 
     /// Inserts `value` at `key`, replacing any existing Value of any type.
     /// The new Value has no TTL.
-    pub(crate) fn put(&mut self, key: &[u8], value: Value) {
-        self.clear_deadline(key);
+    pub(crate) fn put(&mut self, key: &[u8], drained: Drained, value: Value) {
+        self.clear_deadline(key, drained);
         self.map.insert(key.to_vec(), value);
     }
 
     /// Removes `key` and its TTL; returns whether it existed. Used by `del`
     /// and by the automatic removal of emptied containers.
-    pub(crate) fn remove_key(&mut self, key: &[u8]) -> bool {
-        self.clear_deadline(key);
+    pub(crate) fn remove_key(&mut self, key: &[u8], drained: Drained) -> bool {
+        self.clear_deadline(key, drained);
         self.map.remove(key).is_some()
     }
 
@@ -135,7 +140,7 @@ impl Store {
 
     /// Gives the existing `key` a TTL ending at `deadline`, replacing any
     /// earlier one.
-    pub(crate) fn set_deadline(&mut self, key: &[u8], deadline: Instant) {
+    pub(crate) fn set_deadline(&mut self, key: &[u8], _: Drained, deadline: Instant) {
         debug_assert!(self.map.contains_key(key), "TTL on a missing Key");
         if let Some(old) = self.deadlines.insert(key.to_vec(), deadline) {
             self.index.remove(&(old, key.to_vec()));
@@ -144,7 +149,7 @@ impl Store {
     }
 
     /// Removes the TTL of `key`; returns whether it had one.
-    pub(crate) fn clear_deadline(&mut self, key: &[u8]) -> bool {
+    pub(crate) fn clear_deadline(&mut self, key: &[u8], _: Drained) -> bool {
         match self.deadlines.remove(key) {
             Some(old) => {
                 self.index.remove(&(old, key.to_vec()));
@@ -156,7 +161,7 @@ impl Store {
 
     /// Removes every Key whose deadline has passed at `now`. One look at the
     /// earliest deadline when none is due. The returned [`Drained`] lets the
-    /// command make write lookups.
+    /// command call the other `&mut` helpers.
     pub(crate) fn drain_due(&mut self, now: Instant) -> Drained {
         self.remove_due(now);
         Drained(())
@@ -170,7 +175,8 @@ impl Store {
     }
 
     /// Like [`Store::drain_expired`], but returns how many Keys were removed
-    /// instead of a [`Drained`]. For `purge_expired`, which looks nothing up.
+    /// instead of a [`Drained`]. For `purge_expired`, which calls no other
+    /// helper.
     pub(crate) fn remove_expired(&mut self) -> usize {
         if self.index.is_empty() {
             return 0;
