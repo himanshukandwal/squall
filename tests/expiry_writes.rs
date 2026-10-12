@@ -207,6 +207,49 @@ fn creating_write_on_expired_key_of_another_type_starts_fresh() {
     clock.advance(SEC);
     assert_eq!(s.append("k", "xy").unwrap(), 2);
     assert_eq!(s.ttl("k"), Ttl::Persistent);
+
+    s.expire("k", SEC);
+    clock.advance(SEC);
+    assert_eq!(s.hset("k", "f", "v"), Ok(true));
+    assert_eq!(s.hget("k", "f").unwrap(), Some(&b"v"[..]));
+    assert_eq!(s.ttl("k"), Ttl::Persistent);
+
+    s.expire("k", SEC);
+    clock.advance(SEC);
+    assert_eq!(s.zadd("k", [(1.0, "m")]), Ok(1));
+    assert_eq!(s.zscore("k", "m").unwrap(), Some(1.0));
+    assert_eq!(s.ttl("k"), Ttl::Persistent);
+}
+
+#[test]
+fn removing_write_on_expired_key_finds_nothing() {
+    let (mut s, clock) = store();
+    // Each write runs right after its own Key expires, so no earlier
+    // command has drained it yet.
+    let expire_now = |s: &mut Store, key: &str| {
+        s.expire(key, SEC);
+        clock.advance(SEC);
+    };
+    s.rpush("l", ["a", "b", "c"]).unwrap();
+    expire_now(&mut s, "l");
+    assert_eq!(s.lpop("l"), Ok(None));
+    s.rpush("l", ["a", "b", "c"]).unwrap();
+    expire_now(&mut s, "l");
+    assert_eq!(s.rpop("l"), Ok(None));
+    s.hset("h", "f", "v").unwrap();
+    expire_now(&mut s, "h");
+    assert_eq!(s.hdel("h", ["f"]), Ok(0));
+    s.sadd("s", ["m"]).unwrap();
+    expire_now(&mut s, "s");
+    assert_eq!(s.srem("s", ["m"]), Ok(0));
+    s.zadd("z", [(1.0, "m")]).unwrap();
+    expire_now(&mut s, "z");
+    assert_eq!(s.zrem("z", ["m"]), Ok(0));
+    for key in ["l", "h", "s", "z"] {
+        assert!(!s.exists(key), "{key}");
+        assert_eq!(s.ttl(key), Ttl::Missing, "{key}");
+    }
+    assert_eq!(s.len(), 0);
 }
 
 #[test]

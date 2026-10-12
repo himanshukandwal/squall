@@ -178,6 +178,137 @@ fn every_mut_command_drains_due_keys_first() {
     assert_eq!(s.purge_expired(), 0);
 }
 
+/// Gives a bystander Key a 1s TTL, lets it expire, runs `cmd` (which never
+/// names the bystander) and checks that `cmd` removed it.
+fn assert_drains(s: &mut Store, clock: &ManualClock, name: &str, cmd: impl FnOnce(&mut Store)) {
+    s.set("bystander", "x");
+    s.expire("bystander", SEC);
+    clock.advance(SEC);
+    cmd(s);
+    assert_eq!(s.purge_expired(), 0, "{name}");
+}
+
+#[test]
+fn every_mut_command_drains_even_when_it_is_a_no_op_or_fails() {
+    let (mut s, clock) = store();
+    s.set("str", "abc");
+    s.set("n", "5");
+    s.rpush("l", ["a", "b"]).unwrap();
+    s.hset("h", "f", "v").unwrap();
+    s.sadd("s", ["m"]).unwrap();
+    s.zadd("z", [(1.0, "m")]).unwrap();
+    let c = &clock;
+
+    // Commands that change something.
+    assert_drains(&mut s, c, "set", |s| s.set("k", "v"));
+    assert_drains(&mut s, c, "set_ex", |s| s.set_ex("k", "v", 60 * SEC));
+    assert_drains(&mut s, c, "del", |s| assert!(s.del("k")));
+    assert_drains(&mut s, c, "append", |s| {
+        assert_eq!(s.append("str", "d"), Ok(4))
+    });
+    assert_drains(&mut s, c, "incr", |s| assert_eq!(s.incr("n"), Ok(6)));
+    assert_drains(&mut s, c, "decr", |s| assert_eq!(s.decr("n"), Ok(5)));
+    assert_drains(&mut s, c, "incrby", |s| assert_eq!(s.incrby("n", 2), Ok(7)));
+    assert_drains(&mut s, c, "lpush", |s| {
+        assert_eq!(s.lpush("l", ["z"]), Ok(3))
+    });
+    assert_drains(&mut s, c, "rpush", |s| {
+        assert_eq!(s.rpush("l", ["c"]), Ok(4))
+    });
+    assert_drains(&mut s, c, "lpop", |s| {
+        assert!(s.lpop("l").unwrap().is_some())
+    });
+    assert_drains(&mut s, c, "rpop", |s| {
+        assert!(s.rpop("l").unwrap().is_some())
+    });
+    assert_drains(&mut s, c, "hset", |s| {
+        assert_eq!(s.hset("h", "g", "w"), Ok(true))
+    });
+    assert_drains(&mut s, c, "hdel", |s| assert_eq!(s.hdel("h", ["g"]), Ok(1)));
+    assert_drains(&mut s, c, "sadd", |s| assert_eq!(s.sadd("s", ["n"]), Ok(1)));
+    assert_drains(&mut s, c, "srem", |s| assert_eq!(s.srem("s", ["n"]), Ok(1)));
+    assert_drains(&mut s, c, "zadd", |s| {
+        assert_eq!(s.zadd("z", [(2.0, "n")]), Ok(1))
+    });
+    assert_drains(&mut s, c, "zrem", |s| assert_eq!(s.zrem("z", ["n"]), Ok(1)));
+    assert_drains(&mut s, c, "expire", |s| assert!(s.expire("str", 60 * SEC)));
+    assert_drains(&mut s, c, "persist", |s| assert!(s.persist("str")));
+
+    // No-ops.
+    assert_drains(&mut s, c, "del missing", |s| assert!(!s.del("nope")));
+    assert_drains(&mut s, c, "lpop missing", |s| {
+        assert_eq!(s.lpop("nope"), Ok(None))
+    });
+    assert_drains(&mut s, c, "rpop missing", |s| {
+        assert_eq!(s.rpop("nope"), Ok(None))
+    });
+    assert_drains(&mut s, c, "hdel missing", |s| {
+        assert_eq!(s.hdel("nope", ["f"]), Ok(0))
+    });
+    assert_drains(&mut s, c, "srem missing", |s| {
+        assert_eq!(s.srem("nope", ["m"]), Ok(0))
+    });
+    assert_drains(&mut s, c, "zrem missing", |s| {
+        assert_eq!(s.zrem("nope", ["m"]), Ok(0))
+    });
+    assert_drains(&mut s, c, "expire missing", |s| {
+        assert!(!s.expire("nope", SEC))
+    });
+    assert_drains(&mut s, c, "persist missing", |s| {
+        assert!(!s.persist("nope"))
+    });
+    assert_drains(&mut s, c, "set_ex zero", |s| {
+        s.set_ex("nope", "v", Duration::ZERO)
+    });
+
+    // Errors.
+    assert_drains(&mut s, c, "append wrongtype", |s| {
+        assert!(s.append("l", "x").is_err())
+    });
+    assert_drains(&mut s, c, "incr not integer", |s| {
+        assert!(s.incr("str").is_err())
+    });
+    assert_drains(&mut s, c, "decr wrongtype", |s| {
+        assert!(s.decr("l").is_err())
+    });
+    assert_drains(&mut s, c, "incrby wrongtype", |s| {
+        assert!(s.incrby("h", 1).is_err())
+    });
+    assert_drains(&mut s, c, "lpush wrongtype", |s| {
+        assert!(s.lpush("str", ["x"]).is_err())
+    });
+    assert_drains(&mut s, c, "rpush wrongtype", |s| {
+        assert!(s.rpush("h", ["x"]).is_err())
+    });
+    assert_drains(&mut s, c, "lpop wrongtype", |s| {
+        assert!(s.lpop("str").is_err())
+    });
+    assert_drains(&mut s, c, "rpop wrongtype", |s| {
+        assert!(s.rpop("s").is_err())
+    });
+    assert_drains(&mut s, c, "hset wrongtype", |s| {
+        assert!(s.hset("str", "f", "v").is_err())
+    });
+    assert_drains(&mut s, c, "hdel wrongtype", |s| {
+        assert!(s.hdel("l", ["f"]).is_err())
+    });
+    assert_drains(&mut s, c, "sadd wrongtype", |s| {
+        assert!(s.sadd("z", ["x"]).is_err())
+    });
+    assert_drains(&mut s, c, "srem wrongtype", |s| {
+        assert!(s.srem("h", ["x"]).is_err())
+    });
+    assert_drains(&mut s, c, "zadd wrongtype", |s| {
+        assert!(s.zadd("s", [(1.0, "x")]).is_err())
+    });
+    assert_drains(&mut s, c, "zadd nan", |s| {
+        assert!(s.zadd("z", [(f64::NAN, "x")]).is_err())
+    });
+    assert_drains(&mut s, c, "zrem wrongtype", |s| {
+        assert!(s.zrem("l", ["x"]).is_err())
+    });
+}
+
 #[test]
 fn reads_never_remove_expired_keys() {
     let (mut s, clock) = store();
