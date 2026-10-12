@@ -36,11 +36,11 @@ impl Store {
         key: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
     ) -> Result<usize, Error> {
-        match self.map.get_mut(key.as_ref()) {
+        match self.lookup_mut(key.as_ref()) {
             None => {
                 let value = value.as_ref().to_vec();
                 let len = value.len();
-                self.map.insert(key.as_ref().to_vec(), Value::String(value));
+                self.put(key.as_ref(), Value::String(value));
                 Ok(len)
             }
             Some(Value::String(s)) => {
@@ -62,7 +62,7 @@ impl Store {
     /// assert_eq!(store.strlen("k").unwrap(), 5);
     /// ```
     pub fn strlen(&self, key: impl AsRef<[u8]>) -> Result<usize, Error> {
-        match self.map.get(key.as_ref()) {
+        match self.lookup(key.as_ref()) {
             None => Ok(0),
             Some(Value::String(s)) => Ok(s.len()),
             Some(_) => Err(Error::WrongType),
@@ -106,16 +106,21 @@ impl Store {
     /// assert_eq!(store.incrby("n", i64::MAX), Err(squall::Error::Overflow));
     /// ```
     pub fn incrby(&mut self, key: impl AsRef<[u8]>, by: i64) -> Result<i64, Error> {
-        let current = match self.map.get(key.as_ref()) {
-            None => 0,
-            Some(Value::String(s)) => parse_i64(s)?,
-            Some(_) => return Err(Error::WrongType),
-        };
-        let new = current.checked_add(by).ok_or(Error::Overflow)?;
-        self.map.insert(
-            key.as_ref().to_vec(),
-            Value::String(new.to_string().into_bytes()),
-        );
-        Ok(new)
+        let key = key.as_ref();
+        // Update an existing string in place (rather than replacing the
+        // entry) so per-Key metadata survives; errors leave it untouched.
+        match self.lookup_mut(key) {
+            None => {
+                // A missing key counts as 0, so `0 + by` cannot overflow.
+                self.put(key, Value::String(by.to_string().into_bytes()));
+                Ok(by)
+            }
+            Some(Value::String(s)) => {
+                let new = parse_i64(s)?.checked_add(by).ok_or(Error::Overflow)?;
+                *s = new.to_string().into_bytes();
+                Ok(new)
+            }
+            Some(_) => Err(Error::WrongType),
+        }
     }
 }

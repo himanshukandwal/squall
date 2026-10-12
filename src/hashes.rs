@@ -7,7 +7,7 @@ type Hash = HashMap<Vec<u8>, Vec<u8>>;
 
 impl Store {
     fn hash(&self, key: &[u8]) -> Result<Option<&Hash>, Error> {
-        match self.map.get(key) {
+        match self.lookup(key) {
             None => Ok(None),
             Some(Value::Hash(h)) => Ok(Some(h)),
             Some(_) => Err(Error::WrongType),
@@ -31,10 +31,7 @@ impl Store {
         field: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
     ) -> Result<bool, Error> {
-        let entry = self
-            .map
-            .entry(key.as_ref().to_vec())
-            .or_insert_with(|| Value::Hash(Hash::new()));
+        let entry = self.lookup_or_create(key.as_ref(), || Value::Hash(Hash::new()));
         match entry {
             Value::Hash(h) => Ok(h
                 .insert(field.as_ref().to_vec(), value.as_ref().to_vec())
@@ -82,7 +79,7 @@ impl Store {
         I::Item: AsRef<[u8]>,
     {
         let key = key.as_ref();
-        let (removed, empty) = match self.map.get_mut(key) {
+        let (removed, empty) = match self.lookup_mut(key) {
             None => return Ok(0),
             Some(Value::Hash(h)) => {
                 let removed = fields
@@ -94,7 +91,7 @@ impl Store {
             Some(_) => return Err(Error::WrongType),
         };
         if empty {
-            self.map.remove(key);
+            self.remove_key(key);
         }
         Ok(removed)
     }
