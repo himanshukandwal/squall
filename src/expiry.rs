@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use crate::{Store, store::is_expired};
 
-/// The time to live of a Key, as returned by [`Store::ttl`].
+/// The time to live of a Key, as returned by [`Store::ttl`]. Redis: the
+/// reply of `PTTL`.
 ///
 /// ```
 /// use std::time::Duration;
@@ -23,7 +24,8 @@ pub enum Ttl {
     Missing,
     /// The Key exists and has no TTL. Redis: `-1`.
     Persistent,
-    /// The Key expires after exactly this much more time.
+    /// The Key expires after exactly this much more time. Redis: a positive
+    /// number of milliseconds.
     Remaining(Duration),
 }
 
