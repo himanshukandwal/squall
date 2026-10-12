@@ -148,7 +148,7 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = (f64, M)>,
     ) -> Result<usize, Error> {
-        self.drain_expired();
+        let drained = self.drain_expired();
         let key = key.as_ref();
         // Scores are validated before the key is looked up, as Redis does.
         let members: Vec<(f64, M)> = members.into_iter().collect();
@@ -157,7 +157,7 @@ impl Store {
         }
         // `lookup_mut`, not `lookup`: after the drain every Key is live, and
         // this must agree with `lookup_or_create` below.
-        if let Some(v) = self.lookup_mut(key)
+        if let Some(v) = self.lookup_mut(key, drained)
             && !matches!(v, Value::ZSet(_))
         {
             return Err(Error::WrongType);
@@ -165,7 +165,9 @@ impl Store {
         if members.is_empty() {
             return Ok(0);
         }
-        let Value::ZSet(zset) = self.lookup_or_create(key, || Value::ZSet(ZSet::default())) else {
+        let Value::ZSet(zset) =
+            self.lookup_or_create(key, drained, || Value::ZSet(ZSet::default()))
+        else {
             unreachable!("type checked above");
         };
         Ok(members
@@ -230,9 +232,9 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
-        self.drain_expired();
+        let drained = self.drain_expired();
         let key = key.as_ref();
-        let (removed, now_empty) = match self.lookup_mut(key) {
+        let (removed, now_empty) = match self.lookup_mut(key, drained) {
             None => return Ok(0),
             Some(Value::ZSet(z)) => {
                 let removed = members.into_iter().filter(|m| z.remove(m.as_ref())).count();

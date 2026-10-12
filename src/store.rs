@@ -32,12 +32,21 @@ pub(crate) fn is_expired(deadline: Instant, now: Instant) -> bool {
     deadline <= now
 }
 
+/// Proof that the current command has drained the Expired keys, so the write
+/// lookups cannot see one. Only `drain_expired` and `drain_due` make one: the
+/// private field keeps other modules from building it, and since the Store
+/// cannot hold one, a command can only get it from its own drain.
+#[derive(Clone, Copy)]
+pub(crate) struct Drained(());
+
 // Keyspace access helpers. Commands never touch `map`, `deadlines` or
 // `index` directly.
 //
 // `&mut self` commands call `drain_expired` (or `drain_due`) first, so the
-// other `&mut` helpers never see an Expired key. `lookup` is for `&self`
-// reads, which never delete, so it filters Expired keys instead.
+// other `&mut` helpers never see an Expired key; the write lookups require
+// the resulting `Drained`, so skipping the drain does not compile. `lookup`
+// is for `&self` reads, which never delete, so it filters Expired keys
+// instead.
 impl Store {
     /// Looks up `key` for reading. An Expired key reads as missing.
     pub(crate) fn lookup(&self, key: &[u8]) -> Option<&Value> {
@@ -52,15 +61,20 @@ impl Store {
     }
 
     /// Looks up `key` for an in-place write that keeps the Key's metadata.
-    pub(crate) fn lookup_mut(&mut self, key: &[u8]) -> Option<&mut Value> {
+    /// Requires proof that the command drained first, as this does not check
+    /// for Expired keys.
+    pub(crate) fn lookup_mut(&mut self, key: &[u8], _: Drained) -> Option<&mut Value> {
         self.map.get_mut(key)
     }
 
     /// Looks up `key` for writing, first creating it with `create()` if it is
     /// missing. An existing Key is returned as is, whatever its type.
+    /// Requires proof that the command drained first, as this does not check
+    /// for Expired keys.
     pub(crate) fn lookup_or_create(
         &mut self,
         key: &[u8],
+        _: Drained,
         create: impl FnOnce() -> Value,
     ) -> &mut Value {
         self.map.entry(key.to_vec()).or_insert_with(create)
@@ -140,9 +154,34 @@ impl Store {
         }
     }
 
+    /// Removes every Key whose deadline has passed at `now`. One look at the
+    /// earliest deadline when none is due. The returned [`Drained`] lets the
+    /// command make write lookups.
+    pub(crate) fn drain_due(&mut self, now: Instant) -> Drained {
+        self.remove_due(now);
+        Drained(())
+    }
+
+    /// Like [`Store::drain_due`] at the current time, but skips reading the
+    /// clock when no Key has a TTL.
+    pub(crate) fn drain_expired(&mut self) -> Drained {
+        self.remove_expired();
+        Drained(())
+    }
+
+    /// Like [`Store::drain_expired`], but returns how many Keys were removed
+    /// instead of a [`Drained`]. For `purge_expired`, which looks nothing up.
+    pub(crate) fn remove_expired(&mut self) -> usize {
+        if self.index.is_empty() {
+            return 0;
+        }
+        let now = self.now();
+        self.remove_due(now)
+    }
+
     /// Removes every Key whose deadline has passed at `now`; returns how
-    /// many were removed. One look at the earliest deadline when none is due.
-    pub(crate) fn drain_due(&mut self, now: Instant) -> usize {
+    /// many were removed.
+    fn remove_due(&mut self, now: Instant) -> usize {
         let mut removed = 0;
         while let Some((deadline, _)) = self.index.first()
             && is_expired(*deadline, now)
@@ -153,16 +192,6 @@ impl Store {
             removed += 1;
         }
         removed
-    }
-
-    /// Like [`Store::drain_due`] at the current time, but skips reading the
-    /// clock when no Key has a TTL.
-    pub(crate) fn drain_expired(&mut self) -> usize {
-        if self.index.is_empty() {
-            return 0;
-        }
-        let now = self.now();
-        self.drain_due(now)
     }
 }
 

@@ -19,11 +19,11 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
-        self.drain_expired();
+        let drained = self.drain_expired();
         let key = key.as_ref();
         // `lookup_mut`, not `lookup`: after the drain every Key is live, and
         // this must agree with `lookup_or_create` below.
-        if let Some(v) = self.lookup_mut(key)
+        if let Some(v) = self.lookup_mut(key, drained)
             && !matches!(v, Value::Set(_))
         {
             return Err(Error::WrongType);
@@ -32,7 +32,8 @@ impl Store {
         if members.peek().is_none() {
             return Ok(0);
         }
-        let Value::Set(set) = self.lookup_or_create(key, || Value::Set(HashSet::new())) else {
+        let Value::Set(set) = self.lookup_or_create(key, drained, || Value::Set(HashSet::new()))
+        else {
             unreachable!("type checked above");
         };
         Ok(members
@@ -56,9 +57,9 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
-        self.drain_expired();
+        let drained = self.drain_expired();
         let key = key.as_ref();
-        let (removed, now_empty) = match self.lookup_mut(key) {
+        let (removed, now_empty) = match self.lookup_mut(key, drained) {
             None => return Ok(0),
             Some(Value::Set(set)) => {
                 let removed = members
