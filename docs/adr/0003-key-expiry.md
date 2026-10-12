@@ -12,9 +12,9 @@ removed, where time comes from, and how writes treat an existing TTL.
 
 ## Decision
 
-- **Commands.** `expire(key, Duration) -> bool`, `ttl(key) -> Ttl`
-  (`Missing`, `Persistent`, `Remaining(Duration)`, exact), `persist(key) ->
-  bool` and `purge_expired() -> usize`. No
+- **Commands.** `set_ex(key, value, Duration)`, `expire(key, Duration) ->
+  bool`, `ttl(key) -> Ttl` (`Missing`, `Persistent`, `Remaining(Duration)`,
+  exact), `persist(key) -> bool` and `purge_expired() -> usize`. No
   `EXPIREAT`, flags, `GETEX` or `EXPIRETIME`. `Duration::ZERO` expires the
   Key at once; a deadline that would overflow `Instant` means no TTL. Expiry
   commands are infallible.
@@ -34,8 +34,8 @@ removed, where time comes from, and how writes treat an existing TTL.
   A command reads the clock at most once: `expire` always reads it, any
   other mutating command not at all when no Key in the Store has a TTL, and
   a read not at all when the Key it reads has none.
-- **Redis TTL-on-write semantics.** `set` clears the TTL, `expire`
-  replaces it, `persist` removes it. In-place writes (`append`,
+- **Redis TTL-on-write semantics.** `set` clears the TTL, `set_ex` and
+  `expire` replace it, `persist` removes it. In-place writes (`append`,
   counters, pushes and pops, `hset`/`hdel`, `sadd`/`srem`, `zadd`/`zrem`)
   keep it, so the INCR + EXPIRE rate-limit pattern works. `del` and the
   removal of an emptied container drop it; a recreated Key has no TTL.

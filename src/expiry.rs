@@ -1,8 +1,9 @@
-//! Key expiry commands: `expire`, `ttl`, `persist` and `purge_expired`.
+//! Key expiry commands: `set_ex`, `expire`, `ttl`, `persist` and
+//! `purge_expired`.
 
 use std::time::Duration;
 
-use crate::{Store, store::is_expired};
+use crate::{Store, store::is_expired, value::Value};
 
 /// The time to live of a Key, as returned by [`Store::ttl`]. Redis: the
 /// reply of `PTTL`.
@@ -30,6 +31,39 @@ pub enum Ttl {
 }
 
 impl Store {
+    /// Sets `key` to the string `value` with a TTL of `ttl`, replacing any
+    /// existing Value of any type and any earlier TTL. Redis: `SET key value
+    /// PX ms`.
+    ///
+    /// `Duration::ZERO` leaves the key absent, removing any old Value. A
+    /// `ttl` so large that the deadline would overflow `Instant` stores the
+    /// value with no TTL (it never expires).
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use squall::{ManualClock, Store, Ttl};
+    ///
+    /// let clock = ManualClock::new();
+    /// let mut store = Store::with_clock(clock.clone());
+    /// store.set_ex("session", "abc", Duration::from_secs(30));
+    /// assert_eq!(store.ttl("session"), Ttl::Remaining(Duration::from_secs(30)));
+    /// clock.advance(Duration::from_secs(30));
+    /// assert_eq!(store.get("session").unwrap(), None);
+    /// ```
+    pub fn set_ex(&mut self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>, ttl: Duration) {
+        let key = key.as_ref();
+        let now = self.now();
+        self.drain_due(now);
+        if ttl.is_zero() {
+            self.remove_key(key);
+            return;
+        }
+        self.put(key, Value::String(value.as_ref().to_vec()));
+        if let Some(deadline) = now.checked_add(ttl) {
+            self.set_deadline(key, deadline);
+        }
+    }
+
     /// Gives the existing `key` a TTL of `ttl`, replacing any earlier TTL,
     /// and returns `true`; returns `false` and creates nothing if the key is
     /// missing. Redis: `PEXPIRE` (no flags).
