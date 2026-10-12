@@ -148,13 +148,16 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = (f64, M)>,
     ) -> Result<usize, Error> {
+        let drained = self.drain_expired();
         let key = key.as_ref();
         // Scores are validated before the key is looked up, as Redis does.
         let members: Vec<(f64, M)> = members.into_iter().collect();
         if members.iter().any(|(score, _)| score.is_nan()) {
             return Err(Error::NotAFloat);
         }
-        if let Some(v) = self.map.get(key)
+        // `lookup_mut`, not `lookup`: after the drain every Key is live, and
+        // this must agree with `lookup_or_create` below.
+        if let Some(v) = self.lookup_mut(key, drained)
             && !matches!(v, Value::ZSet(_))
         {
             return Err(Error::WrongType);
@@ -162,10 +165,8 @@ impl Store {
         if members.is_empty() {
             return Ok(0);
         }
-        let Value::ZSet(zset) = self
-            .map
-            .entry(key.to_vec())
-            .or_insert_with(|| Value::ZSet(ZSet::default()))
+        let Value::ZSet(zset) =
+            self.lookup_or_create(key, drained, || Value::ZSet(ZSet::default()))
         else {
             unreachable!("type checked above");
         };
@@ -190,7 +191,7 @@ impl Store {
         key: impl AsRef<[u8]>,
         member: impl AsRef<[u8]>,
     ) -> Result<Option<f64>, Error> {
-        match self.map.get(key.as_ref()) {
+        match self.lookup(key.as_ref()) {
             None => Ok(None),
             Some(Value::ZSet(z)) => Ok(z.scores.get(member.as_ref()).map(|s| s.0)),
             Some(_) => Err(Error::WrongType),
@@ -208,7 +209,7 @@ impl Store {
     /// assert_eq!(store.zcard("k").unwrap(), 2);
     /// ```
     pub fn zcard(&self, key: impl AsRef<[u8]>) -> Result<usize, Error> {
-        match self.map.get(key.as_ref()) {
+        match self.lookup(key.as_ref()) {
             None => Ok(0),
             Some(Value::ZSet(z)) => Ok(z.scores.len()),
             Some(_) => Err(Error::WrongType),
@@ -231,8 +232,9 @@ impl Store {
         key: impl AsRef<[u8]>,
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
+        let drained = self.drain_expired();
         let key = key.as_ref();
-        let (removed, now_empty) = match self.map.get_mut(key) {
+        let (removed, now_empty) = match self.lookup_mut(key, drained) {
             None => return Ok(0),
             Some(Value::ZSet(z)) => {
                 let removed = members.into_iter().filter(|m| z.remove(m.as_ref())).count();
@@ -241,13 +243,13 @@ impl Store {
             Some(_) => return Err(Error::WrongType),
         };
         if now_empty {
-            self.map.remove(key);
+            self.remove_key(key, drained);
         }
         Ok(removed)
     }
 
     fn zset(&self, key: &[u8]) -> Result<Option<&ZSet>, Error> {
-        match self.map.get(key) {
+        match self.lookup(key) {
             None => Ok(None),
             Some(Value::ZSet(z)) => Ok(Some(z)),
             Some(_) => Err(Error::WrongType),

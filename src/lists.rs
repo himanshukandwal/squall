@@ -1,7 +1,6 @@
 //! List commands.
 
 use std::collections::VecDeque;
-use std::collections::hash_map::Entry;
 
 use crate::{Error, Store, value::Value};
 
@@ -14,7 +13,7 @@ fn resolve(index: i64, len: usize) -> i128 {
 
 impl Store {
     fn list(&self, key: &[u8]) -> Result<Option<&VecDeque<Vec<u8>>>, Error> {
-        match self.map.get(key) {
+        match self.lookup(key) {
             None => Ok(None),
             Some(Value::List(l)) => Ok(Some(l)),
             Some(_) => Err(Error::WrongType),
@@ -27,15 +26,10 @@ impl Store {
         values: impl IntoIterator<Item = impl AsRef<[u8]>>,
         front: bool,
     ) -> Result<usize, Error> {
-        let list = match self.map.entry(key.to_vec()) {
-            Entry::Occupied(e) => match e.into_mut() {
-                Value::List(l) => l,
-                _ => return Err(Error::WrongType),
-            },
-            Entry::Vacant(e) => match e.insert(Value::List(VecDeque::new())) {
-                Value::List(l) => l,
-                _ => unreachable!(),
-            },
+        let drained = self.drain_expired();
+        let list = match self.lookup_or_create(key, drained, || Value::List(VecDeque::new())) {
+            Value::List(l) => l,
+            _ => return Err(Error::WrongType),
         };
         for v in values {
             let v = v.as_ref().to_vec();
@@ -48,20 +42,21 @@ impl Store {
         let len = list.len();
         // Pushing no values onto a missing key must not leave an empty list.
         if len == 0 {
-            self.map.remove(key);
+            self.remove_key(key, drained);
         }
         Ok(len)
     }
 
     fn pop(&mut self, key: &[u8], front: bool) -> Result<Option<Vec<u8>>, Error> {
-        let list = match self.map.get_mut(key) {
+        let drained = self.drain_expired();
+        let list = match self.lookup_mut(key, drained) {
             None => return Ok(None),
             Some(Value::List(l)) => l,
             Some(_) => return Err(Error::WrongType),
         };
         let item = if front { list.pop_front() } else { list.pop_back() };
         if list.is_empty() {
-            self.map.remove(key);
+            self.remove_key(key, drained);
         }
         Ok(item)
     }
