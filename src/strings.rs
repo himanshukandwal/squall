@@ -41,7 +41,7 @@ impl Store {
             None => {
                 let value = value.as_ref().to_vec();
                 let len = value.len();
-                self.put(key.as_ref(), Value::String(value));
+                self.put(key.as_ref(), drained, Value::String(value));
                 Ok(len)
             }
             Some(Value::String(s)) => {
@@ -114,7 +114,7 @@ impl Store {
         match self.lookup_mut(key, drained) {
             None => {
                 // A missing key counts as 0, so `0 + by` cannot overflow.
-                self.put(key, Value::String(by.to_string().into_bytes()));
+                self.put(key, drained, Value::String(by.to_string().into_bytes()));
                 Ok(by)
             }
             Some(Value::String(s)) => {

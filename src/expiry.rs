@@ -53,14 +53,14 @@ impl Store {
     pub fn set_ex(&mut self, key: impl AsRef<[u8]>, value: impl AsRef<[u8]>, ttl: Duration) {
         let key = key.as_ref();
         let now = self.now();
-        self.drain_due(now);
+        let drained = self.drain_due(now);
         if ttl.is_zero() {
-            self.remove_key(key);
+            self.remove_key(key, drained);
             return;
         }
-        self.put(key, Value::String(value.as_ref().to_vec()));
+        self.put(key, drained, Value::String(value.as_ref().to_vec()));
         if let Some(deadline) = now.checked_add(ttl) {
-            self.set_deadline(key, deadline);
+            self.set_deadline(key, drained, deadline);
         }
     }
 
@@ -92,13 +92,13 @@ impl Store {
             return false;
         }
         if ttl.is_zero() {
-            self.remove_key(key);
+            self.remove_key(key, drained);
             return true;
         }
         match now.checked_add(ttl) {
-            Some(deadline) => self.set_deadline(key, deadline),
+            Some(deadline) => self.set_deadline(key, drained, deadline),
             None => {
-                self.clear_deadline(key);
+                self.clear_deadline(key, drained);
             }
         }
         true
@@ -151,8 +151,8 @@ impl Store {
     /// assert_eq!(store.ttl("k"), Ttl::Persistent);
     /// ```
     pub fn persist(&mut self, key: impl AsRef<[u8]>) -> bool {
-        self.drain_expired();
-        self.clear_deadline(key.as_ref())
+        let drained = self.drain_expired();
+        self.clear_deadline(key.as_ref(), drained)
     }
 
     /// Removes every Expired key from memory now and returns how many were

@@ -93,7 +93,7 @@ impl Store {
             Some(_) => return Err(Error::WrongType),
         };
         if empty {
-            self.remove_key(key);
+            self.remove_key(key, drained);
         }
         Ok(removed)
     }
