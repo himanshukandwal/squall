@@ -20,7 +20,7 @@ impl Store {
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
         let key = key.as_ref();
-        if let Some(v) = self.map.get(key)
+        if let Some(v) = self.lookup(key)
             && !matches!(v, Value::Set(_))
         {
             return Err(Error::WrongType);
@@ -29,11 +29,7 @@ impl Store {
         if members.peek().is_none() {
             return Ok(0);
         }
-        let Value::Set(set) = self
-            .map
-            .entry(key.to_vec())
-            .or_insert_with(|| Value::Set(HashSet::new()))
-        else {
+        let Value::Set(set) = self.lookup_or_create(key, || Value::Set(HashSet::new())) else {
             unreachable!("type checked above");
         };
         Ok(members
@@ -58,7 +54,7 @@ impl Store {
         members: impl IntoIterator<Item = M>,
     ) -> Result<usize, Error> {
         let key = key.as_ref();
-        let (removed, now_empty) = match self.map.get_mut(key) {
+        let (removed, now_empty) = match self.lookup_mut(key) {
             None => return Ok(0),
             Some(Value::Set(set)) => {
                 let removed = members
@@ -70,7 +66,7 @@ impl Store {
             Some(_) => return Err(Error::WrongType),
         };
         if now_empty {
-            self.map.remove(key);
+            self.remove_key(key);
         }
         Ok(removed)
     }
@@ -90,7 +86,7 @@ impl Store {
         key: impl AsRef<[u8]>,
         member: impl AsRef<[u8]>,
     ) -> Result<bool, Error> {
-        match self.map.get(key.as_ref()) {
+        match self.lookup(key.as_ref()) {
             None => Ok(false),
             Some(Value::Set(set)) => Ok(set.contains(member.as_ref())),
             Some(_) => Err(Error::WrongType),
@@ -108,7 +104,7 @@ impl Store {
     /// assert_eq!(store.scard("k").unwrap(), 2);
     /// ```
     pub fn scard(&self, key: impl AsRef<[u8]>) -> Result<usize, Error> {
-        match self.map.get(key.as_ref()) {
+        match self.lookup(key.as_ref()) {
             None => Ok(0),
             Some(Value::Set(set)) => Ok(set.len()),
             Some(_) => Err(Error::WrongType),
@@ -127,7 +123,7 @@ impl Store {
     /// assert_eq!(members, vec![&b"a"[..], &b"b"[..]]);
     /// ```
     pub fn smembers(&self, key: impl AsRef<[u8]>) -> Result<Vec<&[u8]>, Error> {
-        match self.map.get(key.as_ref()) {
+        match self.lookup(key.as_ref()) {
             None => Ok(Vec::new()),
             Some(Value::Set(set)) => Ok(set.iter().map(|m| m.as_slice()).collect()),
             Some(_) => Err(Error::WrongType),
