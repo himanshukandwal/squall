@@ -80,14 +80,32 @@ impl Store {
         self.map.remove(key).is_some()
     }
 
-    /// Iterates over every Key, in unspecified order.
+    /// Iterates over every live Key, in unspecified order. Reads the clock
+    /// once, and not at all when no Key has a TTL.
     pub(crate) fn key_iter(&self) -> impl Iterator<Item = &Vec<u8>> {
-        self.map.keys()
+        let now = (!self.index.is_empty()).then(|| self.now());
+        self.map
+            .keys()
+            .filter(move |key| match (now, self.deadlines.get(*key)) {
+                (Some(now), Some(&deadline)) => !is_expired(deadline, now),
+                _ => true,
+            })
     }
 
-    /// Returns the number of Keys.
+    /// Returns the number of live Keys: all Keys minus the due entries at the
+    /// front of the deadline index. One look at the earliest deadline when
+    /// none is due; no clock read when no Key has a TTL.
     pub(crate) fn key_count(&self) -> usize {
-        self.map.len()
+        if self.index.is_empty() {
+            return self.map.len();
+        }
+        let now = self.now();
+        let due = self
+            .index
+            .iter()
+            .take_while(|(deadline, _)| is_expired(*deadline, now))
+            .count();
+        self.map.len() - due
     }
 
     /// Reads the Store's clock.
