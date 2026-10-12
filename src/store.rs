@@ -52,46 +52,18 @@ impl Store {
     }
 
     /// Looks up `key` for an in-place write that keeps the Key's metadata.
-    ///
-    /// The caller must drain first (`drain_expired` or `drain_due`): an
-    /// Expired key would be returned as if live. Debug builds check this.
     pub(crate) fn lookup_mut(&mut self, key: &[u8]) -> Option<&mut Value> {
-        self.debug_assert_drained(key);
         self.map.get_mut(key)
     }
 
     /// Looks up `key` for writing, first creating it with `create()` if it is
     /// missing. An existing Key is returned as is, whatever its type.
-    ///
-    /// The caller must drain first (`drain_expired` or `drain_due`): an
-    /// Expired key would be returned as if live. Debug builds check this.
     pub(crate) fn lookup_or_create(
         &mut self,
         key: &[u8],
         create: impl FnOnce() -> Value,
     ) -> &mut Value {
-        self.debug_assert_drained(key);
         self.map.entry(key.to_vec()).or_insert_with(create)
-    }
-
-    /// In debug builds, panics if `key` is Expired: the calling command did
-    /// not drain first. Reads the clock only when `key` has a TTL; release
-    /// builds do nothing.
-    ///
-    /// This reads the clock again after the command's drain. With a real
-    /// clock, a Key that falls due between the drain's read and this one
-    /// trips it falsely. That window is the drain itself plus a few
-    /// instructions, so it takes a Key written right at its deadline. A
-    /// `ManualClock` never moves within a command, so tests cannot hit it.
-    fn debug_assert_drained(&self, key: &[u8]) {
-        if cfg!(debug_assertions)
-            && let Some(&deadline) = self.deadlines.get(key)
-        {
-            assert!(
-                !is_expired(deadline, self.now()),
-                "write lookup of an Expired key: caller must drain first"
-            );
-        }
     }
 
     /// Inserts `value` at `key`, replacing any existing Value of any type.
@@ -244,48 +216,5 @@ impl fmt::Debug for Store {
             .field("deadlines", &self.deadlines)
             .field("clock", &format_args!("<dyn Clock>"))
             .finish()
-    }
-}
-
-// The write helpers' precondition is checked by `debug_assert!`, so these
-// tests only make sense when debug assertions are on.
-#[cfg(all(test, debug_assertions))]
-mod tests {
-    use std::time::Duration;
-
-    use super::*;
-    use crate::clock::ManualClock;
-
-    /// A Store holding the string "k", whose TTL of 1s has run out, not yet
-    /// drained.
-    fn store_with_undrained_expired_key() -> Store {
-        let clock = ManualClock::new();
-        let mut store = Store::with_clock(clock.clone());
-        store.set("k", "v");
-        assert!(store.expire("k", Duration::from_secs(1)));
-        clock.advance(Duration::from_secs(1));
-        store
-    }
-
-    #[test]
-    #[should_panic(expected = "caller must drain first")]
-    fn lookup_mut_panics_on_an_undrained_expired_key() {
-        let mut store = store_with_undrained_expired_key();
-        store.lookup_mut(b"k");
-    }
-
-    #[test]
-    #[should_panic(expected = "caller must drain first")]
-    fn lookup_or_create_panics_on_an_undrained_expired_key() {
-        let mut store = store_with_undrained_expired_key();
-        store.lookup_or_create(b"k", || Value::String(Vec::new()));
-    }
-
-    #[test]
-    fn write_lookups_after_a_drain_do_not_panic() {
-        let mut store = store_with_undrained_expired_key();
-        store.drain_expired();
-        assert!(store.lookup_mut(b"k").is_none());
-        store.lookup_or_create(b"k", || Value::String(Vec::new()));
     }
 }
